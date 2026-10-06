@@ -787,6 +787,7 @@ function parseFusionWebSearchProvider(value: unknown): VirtualModelFusionWebSear
     normalized === "serper" ||
     normalized === "serpapi" ||
     normalized === "serply" ||
+    normalized === "searxng" ||
     normalized === "tavily" ||
     normalized === "exa" ||
     normalized === "browser"

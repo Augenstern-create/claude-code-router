@@ -359,6 +359,32 @@ test("gateway config passes proxy preload to Fusion built-in MCP runtimes", asyn
   assert.equal(server.env.TAVILY_API_KEY, "tavily-key");
 });
 
+test("gateway config discovers SearXNG Fusion web search without an API key", async () => {
+  const profiles = [
+    {
+      enabled: true,
+      id: "fusion-searxng",
+      key: "fusion-searxng",
+      metadata: {
+        fusionWebSearch: {
+          env: { SEARXNG_ENDPOINT: "http://searxng.test:8888" },
+          provider: "searxng",
+          toolName: "searxng_web_search"
+        }
+      }
+    }
+  ];
+
+  const artifacts = await fusionBuiltinToolArtifactsForTest(profiles, "http://127.0.0.1:3457", "core-token");
+  const server = artifacts.mcpServers.find((item) => item.name === "fusion-web-search-fusion-searxng");
+
+  assert.ok(server);
+  assert.equal(server.env.FUSION_BUILTIN_TOOL_KIND, "web_search");
+  assert.equal(server.env.SEARCH_PROVIDER, "searxng");
+  assert.equal(server.env.SEARXNG_ENDPOINT, "http://searxng.test:8888");
+  assert.equal(Object.keys(server.env).some((key) => key.includes("API_KEY")), false);
+});
+
 test("gateway ignores non-Gemini capabilities on Gemini preset providers", () => {
   const providerName = "Google Gemini";
   const config = {
@@ -767,6 +793,100 @@ test("gateway prefetches non-browser Fusion web search records without browser i
     assert.equal(requests[0].max_results, 3);
     assert.equal(requests[0].query, "search query");
   } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("gateway prefetches limited SearXNG results and preserves Anthropic hosted-search evidence", async () => {
+  const requests = [];
+  const endpoint = "http://searxng.test:8888/base/";
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    requests.push({ init, url: new URL(String(input)) });
+    return new Response(JSON.stringify({
+      query: "C++ search & encode",
+      results: [
+        { content: "First body", publishedDate: "2026-10-01", title: "First", url: "https://example.test/one" },
+        { content: "Second body", publishedDate: "2026-10-02", title: "Second", url: "https://example.test/two" },
+        { content: "Third body", publishedDate: "2026-10-03", title: "Third", url: "https://example.test/three" }
+      ]
+    }), { headers: { "content-type": "application/json" }, status: 200 });
+  };
+  try {
+    const config = searXngGatewayConfig(endpoint, 2);
+    const context = createHostedWebSearchProtocolContext({
+      body: Buffer.from(JSON.stringify({
+        messages: [{ content: "C++ search & encode", role: "user" }],
+        model: "Fusion/research",
+        tools: [{ name: "web_search", type: "web_search_20250305" }]
+      })),
+      config,
+      method: "POST",
+      path: "/v1/messages",
+      requestId: "req-searxng",
+      routedModel: "Fusion/research",
+      sinceMs: Date.now() - 1000
+    });
+    assert.ok(context);
+    assert.equal(context.toolName, "research_web_search");
+    const records = await selectHostedWebSearchProtocolRecords(context, undefined, config);
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0].engine, "searxng");
+    assert.deepEqual(records[0].results, [
+      { snippet: "First body", title: "First", url: "https://example.test/one" },
+      { snippet: "Second body", title: "Second", url: "https://example.test/two" }
+    ]);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].init.method, undefined);
+    assert.equal(requests[0].url.origin + requests[0].url.pathname, "http://searxng.test:8888/base/search");
+    assert.equal(requests[0].url.search, "?q=C%2B%2B+search+%26+encode&format=json");
+    assert.equal(requests[0].url.searchParams.get("q"), "C++ search & encode");
+    assert.equal(requests[0].url.searchParams.get("format"), "json");
+
+    const response = transformAnthropicWebSearchProtocolResponseValue({
+      content: [{ text: "answer", type: "text" }],
+      id: "msg_searxng",
+      role: "assistant",
+      stop_reason: "tool_use",
+      type: "message",
+      usage: {}
+    }, records, "req-searxng");
+    assert.equal(response.changed, true);
+    assert.deepEqual(response.value.content.map((block) => block.type), ["server_tool_use", "web_search_tool_result", "text"]);
+    assert.equal(response.value.content[1].content[0].type, "web_search_result");
+    assert.equal(response.value.usage.server_tool_use.web_search_requests, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("gateway treats malformed and HTTP-error SearXNG responses as unavailable", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    const config = searXngGatewayConfig("http://searxng.test:8888", 2);
+    for (const response of [
+      new Response("not-json", { status: 200 }),
+      new Response(JSON.stringify({ error: "unavailable" }), { status: 503 })
+    ]) {
+      globalThis.fetch = async () => response;
+      const records = await selectHostedWebSearchProtocolRecords({
+        protocol: "anthropic_messages",
+        queryHint: "failure case",
+        requestId: "req-failure",
+        sinceMs: Date.now() - 1000,
+        toolName: "research_web_search"
+      }, undefined, config);
+      assert.deepEqual(records, []);
+    }
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /searxng failed/i);
+    assert.match(warnings[1], /HTTP 503/);
+  } finally {
+    console.warn = previousWarn;
     globalThis.fetch = previousFetch;
   }
 });
@@ -1598,6 +1718,31 @@ test("gateway synthesizes Gemini SSE text for hosted web search fallback", () =>
 
   assert.match(transformed, /"candidates":\[\{"content":\{"parts":\[\{"text":"Based on the search results, Spot gold traded near \$3,340 per ounce/);
 });
+
+function searXngGatewayConfig(endpoint, resultCount) {
+  return {
+    Providers: [],
+    Router: { fallback: { mode: "off", models: [], retryCount: 0 } },
+    gateway: {},
+    virtualModelProfiles: [
+      {
+        displayName: "Research",
+        enabled: true,
+        id: "research",
+        key: "research",
+        match: { exactAliases: ["Fusion/research"], prefixes: [], suffixes: [] },
+        metadata: {
+          fusionWebSearch: {
+            env: { SEARXNG_ENDPOINT: endpoint },
+            provider: "searxng",
+            resultCount,
+            toolName: "research_web_search"
+          }
+        }
+      }
+    ]
+  };
+}
 
 function sampleSearchRecord() {
   return {

@@ -508,7 +508,7 @@ async function selectConfiguredWebSearchProtocolRecords(
       engine: candidate.provider,
       query: context.queryHint,
       results,
-      searchUrl: searchProviderUrl(candidate.provider, context.queryHint),
+      searchUrl: searchProviderUrl(candidate.provider, context.queryHint, candidate.env),
       toolName: context.toolName
     }];
   } catch (error) {
@@ -531,6 +531,8 @@ async function runConfiguredWebSearch(input: WebSearchProviderInput): Promise<We
       return searchSerpApi(input);
     case "serply":
       return searchSerply(input);
+    case "searxng":
+      return searchSearXng(input);
     case "tavily":
       return searchTavily(input);
     case "exa":
@@ -645,6 +647,13 @@ async function searchSerply(input: WebSearchProviderInput): Promise<WebSearchPro
   return items.map((item) => webSearchResult(item, "title", "link", "description")).filter(isWebSearchProviderResult);
 }
 
+async function searchSearXng(input: WebSearchProviderInput): Promise<WebSearchProviderResult[]> {
+  const url = searXngSearchUrl(searchEnv(input, "SEARXNG_ENDPOINT"), input.query);
+  const raw = await fetchJson(url.toString(), { signal: AbortSignal.timeout(input.timeoutMs) });
+  const items = isRecord(raw) && Array.isArray(raw.results) ? raw.results.slice(0, input.count) : [];
+  return items.map((item) => webSearchResult(item, "title", "url", "content")).filter(isWebSearchProviderResult);
+}
+
 async function searchTavily(input: WebSearchProviderInput): Promise<WebSearchProviderResult[]> {
   const apiKey = searchEnv(input, "TAVILY_API_KEY");
   if (!apiKey) {
@@ -700,6 +709,14 @@ function searchEnv(input: WebSearchProviderInput, key: string): string | undefin
   return input.env?.[key]?.trim() || process.env[key]?.trim() || undefined;
 }
 
+function searXngSearchUrl(endpoint: string | undefined, query: string): URL {
+  const baseUrl = (endpoint || "http://127.0.0.1:8888").replace(/\/+$/, "");
+  const url = new URL(`${baseUrl}/search`);
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "json");
+  return url;
+}
+
 function webSearchResult(item: unknown, titleKey: string, urlKey: string, snippetKey: string): WebSearchProviderResult | undefined {
   if (!isRecord(item)) {
     return undefined;
@@ -721,7 +738,7 @@ function isWebSearchProviderResult(value: WebSearchProviderResult | undefined): 
   return Boolean(value);
 }
 
-function searchProviderUrl(provider: VirtualModelFusionWebSearchProvider, query: string): string {
+function searchProviderUrl(provider: VirtualModelFusionWebSearchProvider, query: string, providerEnv?: Record<string, string>): string {
   const encoded = encodeURIComponent(query);
   switch (provider) {
     case "brave":
@@ -736,6 +753,8 @@ function searchProviderUrl(provider: VirtualModelFusionWebSearchProvider, query:
       return "https://serpapi.com";
     case "serply":
       return "https://serply.io";
+    case "searxng":
+      return searXngSearchUrl(providerEnv?.SEARXNG_ENDPOINT, query).toString();
     case "tavily":
       return "https://tavily.com";
     case "exa":

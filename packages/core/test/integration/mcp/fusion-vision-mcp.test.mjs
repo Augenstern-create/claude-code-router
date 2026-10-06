@@ -521,6 +521,84 @@ test("Fusion vision MCP forwards a local PNG file with a supported label", async
   assert.equal(provider.lastBody?.messages?.[0]?.content?.[1]?.image_url?.url, `data:image/png;base64,${pngA}`);
 });
 
+test("Fusion web search MCP calls SearXNG, encodes queries, normalizes and limits results", async (t) => {
+  const seenUrls = [];
+  const server = http.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    seenUrls.push(url);
+    const query = url.searchParams.get("q");
+    if (query === "malformed") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("not-json");
+      return;
+    }
+    if (query === "error") {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "SearXNG unavailable" }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      query,
+      results: [
+        { content: "First content", publishedDate: "2026-10-01", title: "First", url: "https://example.test/one" },
+        { content: "Second content", publishedDate: "2026-10-02", title: "Second", url: "https://example.test/two" },
+        { content: "Third content", publishedDate: "2026-10-03", title: "Third", url: "https://example.test/three" }
+      ]
+    }));
+  });
+  try {
+    await listen(server);
+  } catch (error) {
+    if (isLocalListenUnavailable(error)) {
+      t.skip(`Local HTTP listen is unavailable: ${formatError(error)}`);
+      return;
+    }
+    throw error;
+  }
+  t.after(() => server.close());
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const child = spawnWebSearch(t, `http://127.0.0.1:${address.port}/custom/`);
+
+  const success = await sendJsonRpc(child, {
+    id: 1,
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: {
+      arguments: { count: 2, prompt: "C++ search & encode" },
+      name: "web_search"
+    }
+  });
+  assert.equal(success.result?.isError, undefined);
+  assert.match(success.result?.content?.[0]?.text, /Search provider: searxng/);
+  assert.match(success.result?.content?.[0]?.text, /First content/);
+  assert.match(success.result?.content?.[0]?.text, /Second content/);
+  assert.doesNotMatch(success.result?.content?.[0]?.text, /Third content/);
+  assert.equal(seenUrls[0].pathname, "/custom/search");
+  assert.equal(seenUrls[0].search, "?q=C%2B%2B+search+%26+encode&format=json");
+  assert.equal(seenUrls[0].searchParams.get("q"), "C++ search & encode");
+  assert.equal(seenUrls[0].searchParams.get("format"), "json");
+
+  const malformed = await sendJsonRpc(child, {
+    id: 2,
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: { arguments: { prompt: "malformed" }, name: "web_search" }
+  });
+  assert.equal(malformed.result?.isError, true);
+  assert.match(malformed.result?.content?.[0]?.text, /Invalid JSON from provider/);
+
+  const failed = await sendJsonRpc(child, {
+    id: 3,
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: { arguments: { prompt: "error" }, name: "web_search" }
+  });
+  assert.equal(failed.result?.isError, true);
+  assert.match(failed.result?.content?.[0]?.text, /Search request failed \(503\): SearXNG unavailable/);
+});
+
 async function serveVision(t, respond) {
   let requests = 0;
   let lastBody;
@@ -562,6 +640,26 @@ function spawnVision(t, port, env = {}) {
       VISION_BASE_URL: `http://127.0.0.1:${port}/v1`,
       VISION_MODEL: "test-vision",
       ...env
+    },
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  t.after(() => {
+    if (!child.killed) {
+      child.kill();
+    }
+  });
+  return child;
+}
+
+function spawnWebSearch(t, endpoint) {
+  const child = spawn(process.execPath, [path.join(process.cwd(), ".test-dist", "core", "runtime", "fusion-vision-mcp.js")], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      FUSION_BUILTIN_TOOL_KIND: "web_search",
+      FUSION_TOOL_NAME: "web_search",
+      SEARCH_PROVIDER: "searxng",
+      SEARXNG_ENDPOINT: endpoint
     },
     stdio: ["pipe", "pipe", "pipe"]
   });

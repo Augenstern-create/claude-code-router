@@ -338,6 +338,7 @@ export const fusionWebSearchProviderOptions: Array<{ label: string; value: Virtu
   { label: "Serper", value: "serper" },
   { label: "SerpAPI", value: "serpapi" },
   { label: "Serply", value: "serply" },
+  { label: "SearXNG", value: "searxng" },
   { label: "Tavily", value: "tavily" },
   { label: "Exa", value: "exa" }
 ];
@@ -351,6 +352,7 @@ export const fusionWebSearchEnvKeysByProvider: Record<VirtualModelFusionWebSearc
   serper: ["SERPER_API_KEY", "SERPER_SEARCH_ENDPOINT"],
   serpapi: ["SERPAPI_API_KEY", "SERPAPI_SEARCH_ENDPOINT"],
   serply: ["SERPLY_API_KEY", "SERPLY_SEARCH_ENDPOINT"],
+  searxng: ["SEARXNG_ENDPOINT"],
   tavily: ["TAVILY_API_KEY", "TAVILY_SEARCH_ENDPOINT"]
 };
 
