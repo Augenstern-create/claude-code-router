@@ -48,6 +48,7 @@ type SearchInput = {
   timeoutMs: number;
 };
 type SearchResult = {
+  publishedDate?: string;
   snippet?: string;
   title?: string;
   url?: string;
@@ -656,6 +657,7 @@ async function analyzeWebSearch(args: Record<string, unknown>): Promise<string> 
     ...results.slice(0, count).map((result, index) => [
       `${index + 1}. ${result.title || result.url || "Untitled"}`,
       result.url ? `URL: ${result.url}` : "",
+      result.publishedDate ? `Published: ${result.publishedDate}` : "",
       result.snippet ? `Snippet: ${result.snippet}` : ""
     ].filter(Boolean).join("\n"))
   ].join("\n\n");
@@ -675,7 +677,7 @@ async function searchWithProvider(
     safeSearch?: string;
     timeoutMs: number;
   }
-): Promise<Array<{ snippet?: string; title?: string; url?: string }>> {
+): Promise<SearchResult[]> {
   if (provider === "brave") return searchBrave(input);
   if (provider === "bing") return searchBing(input);
   if (provider === "google_cse") return searchGoogleCse(input);
@@ -791,7 +793,7 @@ async function searchSearXng(input: SearchInput): Promise<SearchResult[]> {
   const url = searXngSearchUrl(env("SEARXNG_ENDPOINT"), scopedSearchQuery(input));
   const raw = await fetchJson(url.toString(), { signal: AbortSignal.timeout(input.timeoutMs) });
   const items = isRecord(raw) && Array.isArray(raw.results) ? raw.results.slice(0, input.count) : [];
-  return items.map((item) => normalizeSearchResult(item, "title", "url", "content")).filter(isSearchResult);
+  return items.map(normalizeSearXngSearchResult).filter(isSearchResult);
 }
 
 async function searchTavily(input: SearchInput): Promise<SearchResult[]> {
@@ -1188,6 +1190,18 @@ function normalizeSearchResult(value: unknown, titleKey: string, urlKey: string,
     snippet: readString(value[snippetKey]),
     title: readString(value[titleKey]),
     url: readString(value[urlKey])
+  };
+}
+
+function normalizeSearXngSearchResult(value: unknown): SearchResult {
+  const result = normalizeSearchResult(value, "title", "url", "content");
+  if (!isRecord(value)) {
+    return result;
+  }
+  const publishedDate = readString(value.publishedDate) || readString(value.pubdate);
+  return {
+    ...result,
+    ...(publishedDate ? { publishedDate } : {})
   };
 }
 

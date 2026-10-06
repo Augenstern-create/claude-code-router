@@ -44,6 +44,7 @@
     "build:app:win:local": "node build/windows-package-preflight.mjs && npm run build:assets && electron-builder --config build/electron-builder.local.cjs --win --publish never",
     "build:app:win:release": "node build/windows-package-preflight.mjs && npm run build:assets && electron-builder --win",
     "models:update": "node scripts/generate-models-json.mjs",
+    "postinstall": "node scripts/patch-ai-gateway-anthropic-stream.mjs",
     "prepack": "npm run models:update && npm run build:assets",
     "prepublishOnly": "npm run typecheck",
     "preview": "npm run build:assets && electron .",
@@ -76,7 +77,7 @@
     "rebuild:sqlite3": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
-    "@the-next-ai/ai-gateway": "^1.0.21",
+    "@the-next-ai/ai-gateway": "1.0.21",
     "@the-next-ai/bot-gateway-sdk": "^0.1.0",
     "better-sqlite3": "^12.11.1",
     "electron-updater": "^6.8.9",

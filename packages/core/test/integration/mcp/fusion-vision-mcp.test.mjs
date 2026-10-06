@@ -542,8 +542,9 @@ test("Fusion web search MCP calls SearXNG, encodes queries, normalizes and limit
       query,
       results: [
         { content: "First content", publishedDate: "2026-10-01", title: "First", url: "https://example.test/one" },
-        { content: "Second content", publishedDate: "2026-10-02", title: "Second", url: "https://example.test/two" },
-        { content: "Third content", publishedDate: "2026-10-03", title: "Third", url: "https://example.test/three" }
+        { content: "Second content", pubdate: "2026-10-02", title: "Second", url: "https://example.test/two" },
+        { content: "Third content", pubdate: "", publishedDate: null, title: "Third", url: "https://example.test/three" },
+        { content: "Fourth content", publishedDate: "recently-ish", title: "Fourth", url: "https://example.test/four" }
       ]
     }));
   });
@@ -574,6 +575,8 @@ test("Fusion web search MCP calls SearXNG, encodes queries, normalizes and limit
   assert.match(success.result?.content?.[0]?.text, /Search provider: searxng/);
   assert.match(success.result?.content?.[0]?.text, /First content/);
   assert.match(success.result?.content?.[0]?.text, /Second content/);
+  assert.match(success.result?.content?.[0]?.text, /Published: 2026-10-01/);
+  assert.match(success.result?.content?.[0]?.text, /Published: 2026-10-02/);
   assert.doesNotMatch(success.result?.content?.[0]?.text, /Third content/);
   assert.equal(seenUrls[0].pathname, "/custom/search");
   assert.equal(seenUrls[0].search, "?q=C%2B%2B+search+%26+encode&format=json");

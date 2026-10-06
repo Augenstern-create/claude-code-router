@@ -834,8 +834,8 @@ test("gateway prefetches limited SearXNG results and preserves Anthropic hosted-
     assert.equal(records.length, 1);
     assert.equal(records[0].engine, "searxng");
     assert.deepEqual(records[0].results, [
-      { snippet: "First body", title: "First", url: "https://example.test/one" },
-      { snippet: "Second body", title: "Second", url: "https://example.test/two" }
+      { publishedDate: "2026-10-01", snippet: "First body", title: "First", url: "https://example.test/one" },
+      { publishedDate: "2026-10-02", snippet: "Second body", title: "Second", url: "https://example.test/two" }
     ]);
     assert.equal(requests.length, 1);
     assert.equal(requests[0].init.method, undefined);
@@ -855,7 +855,66 @@ test("gateway prefetches limited SearXNG results and preserves Anthropic hosted-
     assert.equal(response.changed, true);
     assert.deepEqual(response.value.content.map((block) => block.type), ["server_tool_use", "web_search_tool_result", "text"]);
     assert.equal(response.value.content[1].content[0].type, "web_search_result");
+    assert.equal(response.value.content[1].content[0].page_age, "2026-10-01");
     assert.equal(response.value.usage.server_tool_use.web_search_requests, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("gateway preserves SearXNG publication dates without rejecting malformed metadata", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    results: [
+      { content: "Published date body", publishedDate: "2026-10-01", title: "Published", url: "https://example.test/published" },
+      { content: "Pubdate body", pubdate: "2026-09-30", title: "Fallback", url: "https://example.test/fallback" },
+      { content: "No date body", publishedDate: null, pubdate: "", title: "No date", url: "https://example.test/no-date" },
+      { content: "Malformed date body", publishedDate: "recently-ish", title: "Malformed", url: "https://example.test/malformed" }
+    ]
+  }), { headers: { "content-type": "application/json" }, status: 200 });
+  try {
+    const config = searXngGatewayConfig("http://searxng.test:8888", 4);
+    const records = await selectHostedWebSearchProtocolRecords({
+      protocol: "anthropic_messages",
+      queryHint: "latest updates",
+      requestId: "req-searxng-dates",
+      sinceMs: Date.now() - 1000,
+      toolName: "research_web_search"
+    }, undefined, config);
+
+    assert.deepEqual(records[0].results, [
+      { publishedDate: "2026-10-01", snippet: "Published date body", title: "Published", url: "https://example.test/published" },
+      { publishedDate: "2026-09-30", snippet: "Pubdate body", title: "Fallback", url: "https://example.test/fallback" },
+      { snippet: "No date body", title: "No date", url: "https://example.test/no-date" },
+      { publishedDate: "recently-ish", snippet: "Malformed date body", title: "Malformed", url: "https://example.test/malformed" }
+    ]);
+
+    const anthropic = transformAnthropicWebSearchProtocolResponseValue({
+      content: [{ text: "answer", type: "text" }],
+      id: "msg_dates",
+      role: "assistant",
+      stop_reason: "tool_use",
+      type: "message",
+      usage: {}
+    }, records, "req-searxng-dates");
+    assert.equal(anthropic.value.content[1].content[0].page_age, "2026-10-01");
+    assert.equal(anthropic.value.content[1].content[1].page_age, "2026-09-30");
+    assert.equal(anthropic.value.content[1].content[2].page_age, undefined);
+    assert.equal(anthropic.value.content[1].content[3].page_age, "recently-ish");
+
+    const openAi = JSON.parse(prepareHostedWebSearchProtocolRequestBody(
+      Buffer.from(JSON.stringify({ messages: [{ content: "latest updates", role: "user" }] })),
+      records,
+      { protocol: "openai_chat_completions", queryHint: "latest updates" }
+    ).toString("utf8"));
+    assert.match(openAi.messages[0].content, /Published: 2026-10-01/);
+
+    const gemini = JSON.parse(prepareHostedWebSearchProtocolRequestBody(
+      Buffer.from(JSON.stringify({ contents: [{ parts: [{ text: "latest updates" }], role: "user" }] })),
+      records,
+      { protocol: "gemini_generate_content", queryHint: "latest updates" }
+    ).toString("utf8"));
+    assert.match(gemini.systemInstruction.parts[0].text, /Published: 2026-09-30/);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1323,9 +1382,11 @@ test("gateway hosted web search response stream transforms Anthropic SSE respons
 
   const transformed = await readStreamText(stream);
 
+  assert.match(transformed, /"type":"thinking_delta","thinking":"reasoning"/);
   assert.match(transformed, /"type":"server_tool_use"/);
   assert.match(transformed, /"type":"web_search_tool_result"/);
   assert.match(transformed, /"type":"web_search_result"/);
+  assert.match(transformed, /"type":"text_delta","text":"answer"/);
   assert.match(transformed, /"server_tool_use":\{"web_search_requests":1\}/);
   assert.match(transformed, /"stop_reason":"end_turn"/);
 });

@@ -581,6 +581,7 @@ function anthropicWebSearchResultBlock(result: BrowserWebSearchProtocolResult): 
   const snippet = anthropicWebSearchResultSnippet(result);
   return {
     encrypted_content: "",
+    ...(result.publishedDate ? { page_age: result.publishedDate } : {}),
     ...(snippet ? { snippet: snippet.slice(0, 1_200) } : {}),
     title: result.title,
     type: "web_search_result",

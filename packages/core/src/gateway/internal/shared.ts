@@ -101,6 +101,7 @@ export type BrowserWebSearchMcpRegistration = {
 export type BrowserWebSearchProtocolResult = {
   content?: string;
   diagnostics?: string[];
+  publishedDate?: string;
   snippet?: string;
   title: string;
   url: string;

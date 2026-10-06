@@ -329,6 +329,7 @@ function hostedWebSearchEvidenceText(records: BrowserWebSearchProtocolRecord[], 
     const resultLines = record.results.slice(0, 8).map((result, resultIndex) => {
       const content = focusedWebSearchContent(result.content, queryHint);
       const details = [
+        result.publishedDate ? `Published: ${result.publishedDate}` : "",
         result.snippet ? `Search snippet: ${result.snippet}` : "",
         content ? `Extracted page content: ${content}` : "",
         result.diagnostics?.length ? `Diagnostics: ${result.diagnostics.join("; ")}` : ""

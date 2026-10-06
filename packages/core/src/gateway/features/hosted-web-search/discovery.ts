@@ -651,7 +651,7 @@ async function searchSearXng(input: WebSearchProviderInput): Promise<WebSearchPr
   const url = searXngSearchUrl(searchEnv(input, "SEARXNG_ENDPOINT"), input.query);
   const raw = await fetchJson(url.toString(), { signal: AbortSignal.timeout(input.timeoutMs) });
   const items = isRecord(raw) && Array.isArray(raw.results) ? raw.results.slice(0, input.count) : [];
-  return items.map((item) => webSearchResult(item, "title", "url", "content")).filter(isWebSearchProviderResult);
+  return items.map(searXngSearchResult).filter(isWebSearchProviderResult);
 }
 
 async function searchTavily(input: WebSearchProviderInput): Promise<WebSearchProviderResult[]> {
@@ -731,6 +731,18 @@ function webSearchResult(item: unknown, titleKey: string, urlKey: string, snippe
     ...(snippet ? { snippet } : {}),
     title,
     url
+  };
+}
+
+function searXngSearchResult(item: unknown): WebSearchProviderResult | undefined {
+  const result = webSearchResult(item, "title", "url", "content");
+  if (!result || !isRecord(item)) {
+    return result;
+  }
+  const publishedDate = stringValue(item.publishedDate) || stringValue(item.pubdate);
+  return {
+    ...result,
+    ...(publishedDate ? { publishedDate } : {})
   };
 }
 
