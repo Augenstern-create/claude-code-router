@@ -119,6 +119,7 @@ const emptyTotals: UsageTotals = {
   cacheTokens: 0,
   costUsd: 0,
   errorCount: 0,
+  unknownCount: 0,
   inputTokens: 0,
   outputTokens: 0,
   requestCount: 0,
@@ -740,6 +741,7 @@ const usageTotalsSelect = `
             COALESCE(SUM(COALESCE(cost_usd, 0)), 0) AS cost_usd,
             COALESCE(SUM(duration_ms), 0) AS duration_ms,
             COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0) AS success_count,
+            COALESCE(SUM(CASE WHEN status_code = 0 THEN 1 ELSE 0 END), 0) AS unknown_count,
             COALESCE(SUM(CASE
               WHEN total_tokens - output_tokens > input_tokens + cache_read_tokens + cache_write_tokens THEN total_tokens - output_tokens
               ELSE input_tokens + cache_read_tokens + cache_write_tokens
@@ -926,6 +928,7 @@ function usageTotalsFromRow(row: Record<string, SqlValue> | undefined): UsageTot
     return { ...emptyTotals };
   }
   const successfulRequests = normalizeCount(row?.success_count);
+  const unknownCount = normalizeCount(row?.unknown_count);
   const promptTokens = normalizeCount(row?.prompt_tokens);
   const cacheTokens = normalizeCount(row?.cache_read_tokens);
   return {
@@ -933,11 +936,12 @@ function usageTotalsFromRow(row: Record<string, SqlValue> | undefined): UsageTot
     cacheRatio: ratio(cacheTokens, promptTokens),
     cacheTokens,
     costUsd: normalizeCost(row?.cost_usd),
-    errorCount: requestCount - successfulRequests,
+    errorCount: requestCount - successfulRequests - unknownCount,
+    unknownCount,
     inputTokens: normalizeCount(row?.input_tokens),
     outputTokens: normalizeCount(row?.output_tokens),
     requestCount,
-    successRate: successfulRequests / requestCount,
+    successRate: successfulRequests / (requestCount - unknownCount || 1),
     totalTokens: normalizeCount(row?.computed_total_tokens)
   };
 }
@@ -1034,7 +1038,8 @@ function buildTotals(events: StoredUsageEvent[]): UsageTotals {
   const totalTokens = sum(events, totalTokenCount);
   const promptTokens = sum(events, promptTokenCount);
   const successfulRequests = events.filter((event) => event.statusCode >= 200 && event.statusCode < 400).length;
-  const errorCount = requestCount - successfulRequests;
+  const unknownCount = events.filter((event) => event.statusCode === 0).length;
+  const errorCount = requestCount - successfulRequests - unknownCount;
 
   return {
     avgDurationMs: Math.round(sum(events, (event) => event.durationMs) / requestCount),
@@ -1042,10 +1047,11 @@ function buildTotals(events: StoredUsageEvent[]): UsageTotals {
     cacheTokens,
     costUsd,
     errorCount,
+    unknownCount,
     inputTokens,
     outputTokens,
     requestCount,
-    successRate: successfulRequests / requestCount,
+    successRate: successfulRequests / (requestCount - unknownCount || 1),
     totalTokens
   };
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formatLogTokenSummary, logRequestModel, logResponseModel } from "@ccr/ui/pages/home/shared/logs.ts";
+import { usageStatusTone } from "@ccr/ui/pages/home/shared/controls.tsx";
 import { formatCompactNumber, formatPercentFixed, formatUsdCost as formatHomeUsdCost } from "@ccr/ui/pages/home/shared/usage.ts";
 import { formatUsdCost as formatTrayUsdCost } from "@ccr/ui/pages/tray/shared.tsx";
 import type { RequestLogEntry } from "@ccr/core/contracts/app.ts";
@@ -21,6 +22,11 @@ test("formatPercentFixed keeps two decimal places for ratios", () => {
   assert.equal(formatPercentFixed(0.375), "37.50%");
   assert.equal(formatPercentFixed(0), "0.00%");
   assert.equal(formatPercentFixed(1), "100.00%");
+});
+
+test("system status does not mark all-unknown requests as failures", () => {
+  assert.equal(usageStatusTone({ requestCount: 1, unknownCount: 1, successRate: 0 }), "idle");
+  assert.equal(usageStatusTone({ requestCount: 2, unknownCount: 1, successRate: 1 }), "ok");
 });
 
 test("formatLogTokenSummary uses the provided locale for token counts", () => {

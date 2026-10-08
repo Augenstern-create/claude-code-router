@@ -2059,7 +2059,7 @@ export type ProxyNetworkSnapshot = {
   maxEntries: number;
 };
 
-export type RequestLogStatusFilter = "all" | "error" | "success";
+export type RequestLogStatusFilter = "all" | "error" | "success" | "unknown";
 
 export type RequestLogListFilter = {
   credential?: string;
@@ -2300,6 +2300,7 @@ export type UsageTotals = {
   cacheTokens: number;
   costUsd: number;
   errorCount: number;
+  unknownCount: number;
   inputTokens: number;
   outputTokens: number;
   requestCount: number;
@@ -2455,7 +2456,7 @@ export type AgentAnalysisSubagentRow = {
 
 export type AgentAnalysisTraceRunKind = "agent" | "llm" | "route" | "subagent" | "tool";
 
-export type AgentAnalysisTraceRunStatus = "error" | "partial" | "success";
+export type AgentAnalysisTraceRunStatus = "error" | "partial" | "success" | "unknown";
 
 export type AgentAnalysisTracePayloadPreview = {
   kind: "empty" | "json" | "text";

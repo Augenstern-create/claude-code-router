@@ -150,6 +150,34 @@ test("UsageStore aggregates stats in SQLite without loading all events", async (
   }
 });
 
+test("UsageStore counts missing HTTP status as unknown, not a failed request", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-usage-unknown-status-test-"));
+  let store;
+  try {
+    store = new UsageStore(path.join(dir, "usage.sqlite"));
+    for (const [requestId, statusCode] of [["ok", 200], ["failed", 503], ["unknown", 0]]) {
+      await store.record({
+        method: "POST",
+        model: "test-model",
+        path: "/v1/messages",
+        requestId,
+        statusCode
+      });
+    }
+
+    const stats = await store.getStats("30d", { includeProxy: true });
+    assert.equal(stats.totals.requestCount, 3);
+    assert.equal(stats.totals.errorCount, 1);
+    assert.equal(stats.totals.unknownCount, 1);
+    assert.equal(stats.totals.successRate, 0.5);
+    assert.equal(stats.series.reduce((count, point) => count + point.unknownCount, 0), 1);
+    assert.equal(stats.models[0]?.unknownCount, 1);
+  } finally {
+    store?.database?.close();
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
 test("UsageStore cache ratio denominator includes cache tokens when total tokens omit cache", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "ccr-usage-cache-ratio-test-"));
   try {

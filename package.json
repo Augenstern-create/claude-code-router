@@ -44,7 +44,7 @@
     "build:app:win:local": "node build/windows-package-preflight.mjs && npm run build:assets && electron-builder --config build/electron-builder.local.cjs --win --publish never",
     "build:app:win:release": "node build/windows-package-preflight.mjs && npm run build:assets && electron-builder --win",
     "models:update": "node scripts/generate-models-json.mjs",
-    "postinstall": "node scripts/patch-ai-gateway-anthropic-stream.mjs",
+    "postinstall": "node scripts/patch-ai-gateway-anthropic-stream.mjs && node scripts/patch-ai-gateway-raw-trace-status.mjs",
     "prepack": "npm run models:update && npm run build:assets",
     "prepublishOnly": "npm run typecheck",
     "preview": "npm run build:assets && electron .",

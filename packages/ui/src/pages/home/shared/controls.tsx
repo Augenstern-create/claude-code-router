@@ -272,8 +272,8 @@ export type SystemStatusPoint = {
   tone: SystemStatusTone;
 };
 
-export function usageStatusTone(point: Pick<UsageTotals, "requestCount" | "successRate">): SystemStatusTone {
-  if (point.requestCount <= 0) return "idle";
+export function usageStatusTone(point: Pick<UsageTotals, "requestCount" | "successRate" | "unknownCount">): SystemStatusTone {
+  if (point.requestCount <= point.unknownCount) return "idle";
   if (point.successRate >= 0.995) return "ok";
   if (point.successRate >= 0.98) return "warn";
   return "error";
@@ -318,8 +318,9 @@ export function systemStatusPointTooltip(segment: SystemStatusPoint, t: (value: 
   return [
     segment.dateLabel,
     `${t("Requests")}: ${formatCompactNumber(segment.point.requestCount)}`,
-    `${t("Success rate")}: ${segment.point.requestCount > 0 ? formatPercent(segment.point.successRate) : "—"}`,
+    `${t("Success rate")}: ${segment.point.requestCount > segment.point.unknownCount ? formatPercent(segment.point.successRate) : "—"}`,
     `${t("Failed requests")}: ${formatCompactNumber(segment.point.errorCount)}`,
+    `${t("Unknown requests")}: ${formatCompactNumber(segment.point.unknownCount)}`,
     `${t("Duration")}: ${formatDuration(segment.point.avgDurationMs)}`
   ].join("\n");
 }

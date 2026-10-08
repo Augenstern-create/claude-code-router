@@ -194,6 +194,7 @@ export const emptyTotals: UsageTotals = {
   cacheTokens: 0,
   costUsd: 0,
   errorCount: 0,
+  unknownCount: 0,
   inputTokens: 0,
   outputTokens: 0,
   requestCount: 0,

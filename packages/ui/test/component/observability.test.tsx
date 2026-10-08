@@ -113,6 +113,25 @@ test("LogsView keeps Chinese token column copy as Token", () => {
   assert.doesNotMatch(html, /令牌/);
 });
 
+test("LogsView renders missing HTTP status as neutral unknown rather than a failure", () => {
+  const html = renderToStaticMarkup(
+    <AppI18nContext.Provider value={appCopy.en}>
+      <LogsView
+        error=""
+        filter={{ page: 1, pageSize: 25, status: "unknown" }}
+        loading={false}
+        page={{ ...emptyLogPage, items: [{ ...sampleRequestLogEntry, ok: false, statusCode: 0 }], total: 1 }}
+        refreshLogs={() => undefined}
+        updateFilter={() => undefined}
+      />
+    </AppI18nContext.Provider>
+  );
+
+  assert.match(html, /network-dot-active/);
+  assert.match(html, /Unknown/);
+  assert.doesNotMatch(html, /network-dot-error/);
+});
+
 test("AgentAnalysisView keeps session headings horizontal and shows cache rate and cost", () => {
   const session: AgentAnalysisSessionRow = {
     agent: "claude-code",
@@ -125,6 +144,7 @@ test("AgentAnalysisView keeps session headings horizontal and shows cache rate a
     costUsd: 1.25,
     durationMs: 900,
     errorCount: 0,
+    unknownCount: 0,
     id: "session-cache-cost",
     inputTokens: 500,
     lastSeenAt: "2026-07-23T00:01:00.000Z",

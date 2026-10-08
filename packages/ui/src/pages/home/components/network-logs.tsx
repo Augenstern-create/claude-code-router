@@ -831,9 +831,9 @@ function LogMobileCard({
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
               <span className={cn(
                 "rounded-full px-2 py-0.5 text-[11px] font-bold uppercase",
-                item.ok ? "network-state-pill-completed" : "network-state-pill-error"
+                requestLogPillClass(item)
               )}>
-                HTTP {item.statusCode || "-"}
+                {item.statusCode ? `HTTP ${item.statusCode}` : t(requestLogUnknown(item) ? "Unknown" : "Error")}
               </span>
               <span className="network-row-secondary rounded-full px-2 py-0.5 text-[11px] font-semibold">{item.isStream ? t("Streaming") : t("Non-streaming")}</span>
               {item.retryAttempts.length > 0 ? (
@@ -922,7 +922,7 @@ const LogRow = memo(function LogRow({
         <div className="flex min-w-0 items-center gap-2 px-2">
           <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
           <LogStatusDot entry={item} />
-          <span className="network-row-secondary truncate">{item.statusCode || "-"}</span>
+          <span className="network-row-secondary truncate">{item.statusCode || t(requestLogUnknown(item) ? "Unknown" : "Error")}</span>
           {item.retryAttempts.length > 0 ? (
             <span
               className="network-service-paused shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
@@ -961,9 +961,9 @@ export function LogExpandedDetails({
       <div className="network-detail-bar flex min-h-10 min-w-0 items-center gap-2 border-b px-3 py-1.5">
         <span className={cn(
           "rounded-full px-3 py-1 text-[12px] font-bold uppercase",
-          entry.ok ? "network-state-pill-completed" : "network-state-pill-error"
+          requestLogPillClass(entry)
         )}>
-          HTTP {entry.statusCode || "-"}
+          {entry.statusCode ? `HTTP ${entry.statusCode}` : t(requestLogUnknown(entry) ? "Unknown" : "Error")}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold" title={entry.url}>
           {entry.method} {entry.path}
@@ -1014,7 +1014,7 @@ export function LogExpandedDetails({
           headers={entry.responseHeaders}
           requestLogId={entry.id}
           side="response"
-          subtitle={`HTTP ${entry.statusCode || "-"}`}
+          subtitle={entry.statusCode ? `HTTP ${entry.statusCode}` : t(requestLogUnknown(entry) ? "Unknown" : "Error")}
           title={t("响应")}
         />
       </div>
@@ -1514,8 +1514,18 @@ function streamSpeedSampleLabel(status: NonNullable<RequestLogEntry["streamSpeed
 
 function LogStatusDot({ entry }: { entry: RequestLogEntry }) {
   return (
-    <span className={cn("h-3 w-3 shrink-0 rounded-full", entry.ok ? "network-dot-completed" : "network-dot-error")} />
+    <span className={cn("h-3 w-3 shrink-0 rounded-full", requestLogUnknown(entry) ? "network-dot-active" : entry.ok ? "network-dot-completed" : "network-dot-error")} />
   );
+}
+
+function requestLogUnknown(entry: RequestLogEntry): boolean {
+  return !entry.ok && entry.statusCode === 0 && !entry.error;
+}
+
+function requestLogPillClass(entry: RequestLogEntry): string {
+  return requestLogUnknown(entry)
+    ? "network-state-pill-active"
+    : entry.ok ? "network-state-pill-completed" : "network-state-pill-error";
 }
 
 function LogStreamCell({ entry }: { entry: RequestLogEntry }) {

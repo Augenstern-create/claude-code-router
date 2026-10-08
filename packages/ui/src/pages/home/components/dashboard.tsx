@@ -2402,7 +2402,7 @@ function overviewMetricDatum(metric: OverviewMetricKind, totals: UsageTotals, tr
     return { label: translate("Estimated cost"), ratio: Math.min(1, Math.max(0, (totals.costUsd ?? 0) / 1)), tone: "slate", value: formatUsdCost(totals.costUsd) };
   }
   if (metric === "success-rate") {
-    return { label: translate("Request success rate"), ratio: totals.successRate, tone: "teal", value: totals.requestCount > 0 ? formatPercent(totals.successRate) : "—" };
+    return { label: translate("Request success rate"), ratio: totals.successRate, tone: "teal", value: totals.requestCount > totals.unknownCount ? formatPercent(totals.successRate) : "—" };
   }
   if (metric === "errors") {
     return { label: translate("Errors"), ratio: totals.requestCount > 0 ? totals.errorCount / totals.requestCount : 0, tone: "rose", value: formatCompactNumber(totals.errorCount) };
@@ -2434,7 +2434,7 @@ type SystemStatusTooltipState = {
 };
 
 const systemStatusTooltipWidth = 190;
-const systemStatusTooltipHeight = 104;
+const systemStatusTooltipHeight = 124;
 const systemStatusTooltipGap = 10;
 const systemStatusTooltipViewportMargin = 12;
 
@@ -2478,9 +2478,11 @@ function SystemStatusBar({
     point,
     tone: usageStatusTone(point)
   }));
-  const successLabel = usageStats.totals.requestCount > 0
+  const successLabel = usageStats.totals.requestCount > usageStats.totals.unknownCount
     ? `${formatPercent(usageStats.totals.successRate)} ${t("Request success rate")}`
-    : t("No requests yet");
+    : usageStats.totals.unknownCount > 0
+      ? `${formatCompactNumber(usageStats.totals.unknownCount)} ${t("Unknown requests")}`
+      : t("No requests yet");
   const overallTone = usageStatusTone(usageStats.totals);
   const StatusIcon = overallTone === "ok" ? Check : CircleAlert;
   const rangeLabel = formatSystemStatusRange(segments, usageRange);
@@ -2586,11 +2588,15 @@ function SystemStatusBar({
                 </span>
                 <span className="flex justify-between gap-3">
                   <span className="text-muted-foreground">{t("Success rate")}</span>
-                  <span className="font-medium">{statusTooltip.segment.point.requestCount > 0 ? formatPercent(statusTooltip.segment.point.successRate) : "—"}</span>
+                  <span className="font-medium">{statusTooltip.segment.point.requestCount > statusTooltip.segment.point.unknownCount ? formatPercent(statusTooltip.segment.point.successRate) : "—"}</span>
                 </span>
                 <span className="flex justify-between gap-3">
                   <span className="text-muted-foreground">{t("Failed requests")}</span>
                   <span className="font-medium">{formatCompactNumber(statusTooltip.segment.point.errorCount)}</span>
+                </span>
+                <span className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">{t("Unknown requests")}</span>
+                  <span className="font-medium">{formatCompactNumber(statusTooltip.segment.point.unknownCount)}</span>
                 </span>
                 <span className="flex justify-between gap-3">
                   <span className="text-muted-foreground">{t("Duration")}</span>
@@ -4744,7 +4750,7 @@ function AgentSessionRequestsPanel({ detail }: { detail: AgentSessionDetail }) {
               {requests.map((request) => (
                 <tr className={agentListRowClassName()} key={request.id}>
                   <td className="px-3 py-2 font-mono">{formatLogDateTime(request.createdAt)}</td>
-                  <td className="px-3 py-2 font-semibold">{request.statusCode || "-"}</td>
+                  <td className="px-3 py-2 font-semibold">{request.statusCode || t(request.error ? "Error" : "Unknown")}</td>
                   <td className="max-w-[140px] px-3 py-2" title={formatRouteReason(request.routeReason)}>{formatRouteReason(request.routeReason)}</td>
                   <td className="max-w-[300px] px-3 py-2" title={`${request.provider}/${request.model}`}>{request.provider}/{request.model}</td>
                   <td className="px-3 py-2 text-right" title={request.tools.join(", ")}>{formatCompactNumber(request.toolCallCount)}</td>
@@ -6024,6 +6030,7 @@ function traceRunBarStyle(run: AgentAnalysisTraceRun, traceDurationMs: number): 
 function traceRunDotClass(run: AgentAnalysisTraceRun): string {
   if (run.status === "error") return "bg-rose-500";
   if (run.status === "partial") return "bg-amber-500";
+  if (run.status === "unknown") return "bg-slate-400";
   if (run.kind === "agent") return "bg-teal-500";
   if (run.kind === "route") return "bg-cyan-500";
   if (run.kind === "subagent") return "bg-amber-500";
@@ -6034,6 +6041,7 @@ function traceRunDotClass(run: AgentAnalysisTraceRun): string {
 function traceRunBarClass(run: AgentAnalysisTraceRun): string {
   if (run.status === "error") return "bg-rose-500";
   if (run.status === "partial") return "bg-amber-500";
+  if (run.status === "unknown") return "bg-slate-400";
   if (run.kind === "agent") return "bg-teal-500";
   if (run.kind === "route") return "bg-cyan-500";
   if (run.kind === "subagent") return "bg-amber-500";
@@ -6044,12 +6052,14 @@ function traceRunBarClass(run: AgentAnalysisTraceRun): string {
 function traceRunStatusBadgeClass(status: AgentAnalysisTraceRun["status"]): string {
   if (status === "error") return "border-rose-200 bg-rose-50 text-rose-700";
   if (status === "partial") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "unknown") return "border-slate-200 bg-slate-50 text-slate-700";
   return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
 function traceRunStatusLabel(status: AgentAnalysisTraceRun["status"]): string {
   if (status === "error") return "Error";
   if (status === "partial") return "Partial failure";
+  if (status === "unknown") return "Unknown";
   return "Success";
 }
 
@@ -6417,6 +6427,10 @@ function UsageTooltip({
             <div className="flex min-w-[150px] items-center justify-between gap-4">
               <span className="text-muted-foreground">{t("Failed requests")}</span>
               <span className="font-medium">{formatCompactNumber(point.errorCount)}</span>
+            </div>
+            <div className="flex min-w-[150px] items-center justify-between gap-4">
+              <span className="text-muted-foreground">{t("Unknown requests")}</span>
+              <span className="font-medium">{formatCompactNumber(point.unknownCount)}</span>
             </div>
             <div className="flex min-w-[150px] items-center justify-between gap-4">
               <span className="text-muted-foreground">{t("Cost")}</span>

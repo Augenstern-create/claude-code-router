@@ -10,6 +10,7 @@ COPY packages/core/package.json packages/core/package.json
 COPY packages/electron/package.json packages/electron/package.json
 COPY packages/ui/package.json packages/ui/package.json
 COPY scripts/patch-ai-gateway-anthropic-stream.mjs scripts/patch-ai-gateway-anthropic-stream.mjs
+COPY scripts/patch-ai-gateway-raw-trace-status.mjs scripts/patch-ai-gateway-raw-trace-status.mjs
 RUN npm ci
 
 COPY . .
@@ -25,8 +26,10 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/package.json
 COPY scripts/patch-ai-gateway-anthropic-stream.mjs scripts/patch-ai-gateway-anthropic-stream.mjs
+COPY scripts/patch-ai-gateway-raw-trace-status.mjs scripts/patch-ai-gateway-raw-trace-status.mjs
 RUN npm ci --omit=dev --workspace=@claude-code-router/core --include-workspace-root=false \
   && node scripts/patch-ai-gateway-anthropic-stream.mjs \
+  && node scripts/patch-ai-gateway-raw-trace-status.mjs \
   && npm cache clean --force
 
 FROM ${RUNTIME_NODE_IMAGE} AS runtime

@@ -106,6 +106,33 @@ test("RequestLogRuntime creates a standalone record from single-service raw trac
   }
 });
 
+test("RequestLogRuntime keeps a standalone raw trace without upstream status unknown", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-request-log-runtime-unknown-test-"));
+  const runtime = createRuntime(dir);
+  try {
+    assert.equal(runtime.enqueueRawTrace({
+      allowStandaloneRecord: true,
+      method: "POST",
+      path: "/v1/messages",
+      requestHeaders: { "user-agent": "claude-code test" },
+      requestId: "raw-trace-no-status",
+      responseBodyText: JSON.stringify({ content: [{ text: "<block>no", type: "text" }] })
+    }).accepted, true);
+    await runtime.flush({ timeoutMs: 10_000 });
+
+    const page = await runtime.list({ status: "unknown" });
+    assert.equal(page.total, 1);
+    assert.equal(page.items[0].statusCode, 0);
+    assert.equal((await runtime.list({ status: "error" })).total, 0);
+    const analysis = await runtime.analyze({ range: "30d" });
+    assert.equal(analysis.totals.unknownCount, 1);
+    assert.equal(analysis.totals.errorCount, 0);
+  } finally {
+    await runtime.close({ timeoutMs: 5_000 });
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
 test("RequestLogStore resolves unknown raw trace body capture from the final request status", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "ccr-request-log-raw-policy-test-"));
   const store = new RequestLogStore(path.join(dir, "request-logs.sqlite"));

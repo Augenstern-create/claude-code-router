@@ -1677,6 +1677,52 @@ test("RequestLogStore distinguishes partial session failures from failed session
   }
 });
 
+test("RequestLogStore excludes unknown HTTP outcomes from agent failure counts", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-request-log-unknown-status-test-"));
+  const store = new RequestLogStore(path.join(dir, "request-logs.sqlite"));
+  try {
+    for (const [requestId, statusCode] of [["ok", 200], ["failed", 503], ["unknown", 0]]) {
+      await store.record({
+        method: "POST",
+        path: "/v1/messages",
+        requestBody: Buffer.from(JSON.stringify({ model: "test-model", messages: [] })),
+        requestHeaders: { "user-agent": "claude-code test" },
+        requestId,
+        responseBodyText: "{}",
+        startedAt: new Date().toISOString(),
+        statusCode,
+        url: "/v1/messages"
+      });
+    }
+
+    const analysis = await store.analyze({ range: "30d" });
+    assert.equal(analysis.totals.requestCount, 3);
+    assert.equal(analysis.totals.errorCount, 1);
+    assert.equal(analysis.totals.unknownCount, 1);
+    assert.equal(analysis.totals.successRate, 0.5);
+    assert.deepEqual(analysis.errors.map((entry) => entry.requestId), ["failed"]);
+    assert.equal((await store.list({ status: "error" })).total, 1);
+    assert.equal((await store.list({ status: "success" })).total, 1);
+    assert.equal((await store.list({ status: "unknown" })).total, 1);
+
+    await store.record({
+      error: "socket reset before HTTP response",
+      method: "POST",
+      path: "/v1/messages",
+      requestBody: Buffer.alloc(0),
+      requestId: "network-failed",
+      startedAt: new Date().toISOString(),
+      statusCode: 0,
+      url: "/v1/messages"
+    });
+    assert.equal((await store.list({ status: "error" })).total, 2);
+    assert.equal((await store.list({ status: "unknown" })).total, 1);
+  } finally {
+    await store.close();
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
 test("RequestLogStore agent analysis cache ratio denominator includes cache tokens when total tokens omit cache", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "ccr-request-log-cache-ratio-test-"));
   let store;

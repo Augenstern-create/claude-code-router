@@ -390,6 +390,7 @@ const emptyAgentAnalysisTotals: AgentAnalysisTotals = {
   cacheWriteTokens: 0,
   costUsd: 0,
   errorCount: 0,
+  unknownCount: 0,
   inputTokens: 0,
   maxConcurrentRequests: 0,
   maxDurationMs: 0,
@@ -3497,7 +3498,7 @@ function buildAgentRouteRows(requests: AnalyzedAgentRequest[]): AgentObservabili
 
 function buildAgentErrorRows(requests: AnalyzedAgentRequest[]): AgentObservabilityErrorRow[] {
   return requests
-    .filter((request) => !request.ok || Boolean(request.error))
+    .filter(isAnalyzedRequestFailure)
     .slice(-100)
     .reverse()
     .map((request) => ({
@@ -3672,7 +3673,7 @@ function buildAgentTrace(
       sessionId,
       startedAt: isoFromMs(startMs),
       status: totals.errorCount === 0
-        ? "success"
+        ? totals.unknownCount > 0 ? "unknown" : "success"
         : totals.errorCount === totals.requestCount
           ? "error"
           : "partial",
@@ -3837,7 +3838,7 @@ function requestTraceRun({
     routeReason: request.routeReason,
     sessionId: request.sessionId,
     startedAt: request.createdAt,
-    status: request.ok && !request.error ? "success" : "error",
+    status: isAnalyzedRequestUnknown(request) ? "unknown" : request.ok && !request.error ? "success" : "error",
     statusCode: request.statusCode,
     totalTokens: request.totalTokens
   };
@@ -4013,7 +4014,8 @@ function buildAgentAnalysisTotals(requests: AnalyzedAgentRequest[]): AgentAnalys
   const costUsd = sum(requests, (request) => request.costUsd ?? 0);
   const totalTokens = sum(requests, agentAnalysisTotalTokenCount);
   const promptTokens = sum(requests, agentAnalysisPromptTokenCount);
-  const successfulRequests = requests.filter((request) => request.ok).length;
+  const successfulRequests = requests.filter((request) => request.ok && !request.error).length;
+  const unknownCount = requests.filter(isAnalyzedRequestUnknown).length;
   const sessionCount = new Set(requests.map((request) => `${request.agent}:${request.sessionId}`)).size;
   const durations = requests.map((request) => request.durationMs).sort((a, b) => a - b);
 
@@ -4024,7 +4026,8 @@ function buildAgentAnalysisTotals(requests: AnalyzedAgentRequest[]): AgentAnalys
     cacheTokens,
     cacheWriteTokens,
     costUsd,
-    errorCount: requests.length - successfulRequests,
+    errorCount: requests.length - successfulRequests - unknownCount,
+    unknownCount,
     inputTokens,
     maxConcurrentRequests: maxConcurrentRequests(requests),
     maxDurationMs: durations.at(-1) ?? 0,
@@ -4035,10 +4038,18 @@ function buildAgentAnalysisTotals(requests: AnalyzedAgentRequest[]): AgentAnalys
     requestCount: requests.length,
     sessionCount,
     subagentCallCount: requests.filter((request) => Boolean(request.subagentModel)).length,
-    successRate: successfulRequests / requests.length,
+    successRate: successfulRequests / (requests.length - unknownCount || 1),
     toolCallCount: sum(requests, (request) => request.toolCallCount),
     totalTokens
   };
+}
+
+function isAnalyzedRequestUnknown(request: AnalyzedAgentRequest): boolean {
+  return !request.ok && request.statusCode === 0 && !request.error;
+}
+
+function isAnalyzedRequestFailure(request: AnalyzedAgentRequest): boolean {
+  return Boolean(request.error) || (!request.ok && !isAnalyzedRequestUnknown(request));
 }
 
 function agentAnalysisPromptTokenCount(request: AnalyzedAgentRequest): number {
@@ -4799,9 +4810,11 @@ function buildLogWhereClause(filter: RequestLogListFilter): { params: SqlValue[]
   const query = normalizeFilterValue(filter.query);
 
   if (status === "success") {
-    where.push("ok = 1");
+    where.push("ok = 1 AND error = ''");
   } else if (status === "error") {
-    where.push("ok = 0");
+    where.push("(error <> '' OR (ok = 0 AND status_code <> 0))");
+  } else if (status === "unknown") {
+    where.push("ok = 0 AND status_code = 0 AND error = ''");
   }
   if (model) {
     where.push("model = ?");
@@ -6510,7 +6523,7 @@ function splitRouteSelector(value: string | undefined): { model?: string; provid
 }
 
 function normalizeStatusFilter(value: RequestLogStatusFilter | undefined): RequestLogStatusFilter {
-  return value === "success" || value === "error" ? value : "all";
+  return value === "success" || value === "error" || value === "unknown" ? value : "all";
 }
 
 function normalizeFilterValue(value: string | undefined): string | undefined {
