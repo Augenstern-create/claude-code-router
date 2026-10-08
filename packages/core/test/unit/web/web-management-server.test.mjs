@@ -132,6 +132,37 @@ test("startGateway reuses an already healthy CCR gateway on the configured port"
     assert.equal(externalGatewayState.reloadRequests.at(-1).forceRestart, true);
     assert.equal(externalGatewayState.revision, gatewayRuntimeConfigRevision(saveResult.value));
     assert.equal(gatewayService.getStatus().gatewayManagedExternally, true);
+
+    const profileConfig = structuredClone(saveResult.value);
+    profileConfig.profile.enabled = true;
+    profileConfig.profile.profiles = [{
+      agent: "claude-code",
+      enabled: true,
+      env: {},
+      id: "test-claude-profile",
+      model: "Test Provider/test-model",
+      name: "Test Claude Profile",
+      scope: "ccr",
+      surface: "cli"
+    }];
+    const reloadCountBeforeProfile = externalGatewayState.reloadRequests.length;
+    const profileSave = await rpc(runtime.url, webAuthToken, "saveConfig", [profileConfig]);
+    assert.equal(profileSave.ok, true);
+    assert.ok(profileSave.value.APIKEYS.some((key) => key.id === "profile:test-claude-profile"));
+    assert.equal(externalGatewayState.reloadRequests.length, reloadCountBeforeProfile + 2,
+      "the gateway must reload again after profile apply creates an API key");
+    assert.equal(externalGatewayState.reloadRequests.at(-1).forceRestart, true);
+    assert.equal(externalGatewayState.revision, gatewayRuntimeConfigRevision(profileSave.value));
+
+    const disabledProfileConfig = structuredClone(profileSave.value);
+    disabledProfileConfig.profile.profiles[0].enabled = false;
+    const reloadCountBeforeDisable = externalGatewayState.reloadRequests.length;
+    const disabledProfileSave = await rpc(runtime.url, webAuthToken, "saveConfig", [disabledProfileConfig]);
+    assert.equal(disabledProfileSave.ok, true);
+    assert.ok(!disabledProfileSave.value.APIKEYS.some((key) => key.id === "profile:test-claude-profile"));
+    assert.equal(externalGatewayState.reloadRequests.length, reloadCountBeforeDisable + 2,
+      "the gateway must reload again after profile apply revokes an API key");
+    assert.equal(externalGatewayState.revision, gatewayRuntimeConfigRevision(disabledProfileSave.value));
   } finally {
     gatewayService.start = originalStart;
     await runtime.close();

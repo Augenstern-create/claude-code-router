@@ -294,7 +294,7 @@ const rpcHandlers: Record<string, RpcHandler> = {
       message: `${synced.result.message}\n${gatewayDetail}\n${apiKeyDetail}`
     };
   },
-  applyProfile: async () => applyProfileConfig(await loadAppConfig()),
+  applyProfile: async () => applyProfileWithGatewayKeySync(await loadAppConfig()),
   cancelBotGatewayQrLogin: (request) => cancelBotGatewayQrLogin(request as BotGatewayQrLoginCancelRequest),
   checkProviderConnectivity: async (request) => {
     const config = await loadAppConfig();
@@ -384,7 +384,7 @@ const rpcHandlers: Record<string, RpcHandler> = {
     if (status.state !== "running") {
       throw new Error(status.lastError || "CCR gateway did not start.");
     }
-    logProfileApplyResult(await applyProfileConfig(config));
+    logProfileApplyResult(await applyProfileWithGatewayKeySync(config));
     return openProfileFromCcr(config, request as ProfileOpenRequest);
   },
   probeLocalAgentProvider: (request) => probeLocalAgentProvider(request as LocalAgentProviderProbeRequest),
@@ -418,7 +418,7 @@ const rpcHandlers: Record<string, RpcHandler> = {
     const syncedClaudeAppConfig = await syncClaudeAppGatewayConfig(savedConfig);
     const nextConfig = syncedClaudeAppConfig.config;
     await gatewayService.updateConfig(nextConfig);
-    logProfileApplyResult(await applyProfileConfig(nextConfig));
+    logProfileApplyResult(await applyProfileWithGatewayKeySync(nextConfig));
     invalidateProviderAccountSnapshotCache();
     return nextConfig;
   },
@@ -498,7 +498,7 @@ async function startConfiguredServices(reason: string): Promise<void> {
       console.error(`Failed to start gateway during ${reason}: ${status.lastError}`);
     }
     if (status.state === "running") {
-      const profileResult = await applyProfileConfig(config, { excludeAgents: ["zcode"] });
+      const profileResult = await applyProfileWithGatewayKeySync(config, { excludeAgents: ["zcode"] });
       logProfileApplyResult(profileResult);
     }
     if (config.proxy.enabled && config.proxy.systemProxy) {
@@ -530,7 +530,22 @@ async function applyProfileIfServiceRunning(config: AppConfig, status: GatewaySt
   if (status.state !== "running") {
     return;
   }
-  logProfileApplyResult(await applyProfileConfig(config));
+  logProfileApplyResult(await applyProfileWithGatewayKeySync(config));
+}
+
+async function applyProfileWithGatewayKeySync(
+  config: AppConfig,
+  options?: Parameters<typeof applyProfileConfig>[1]
+): ReturnType<typeof applyProfileConfig> {
+  const previousApiKeys = JSON.stringify(config.APIKEYS);
+  const result = await applyProfileConfig(config, options);
+  if (gatewayService.getStatus().state === "running" && JSON.stringify(config.APIKEYS) !== previousApiKeys) {
+    const status = await gatewayService.restart(config);
+    if (status.state !== "running") {
+      throw new Error(status.lastError || "CCR gateway did not restart after profile API keys changed.");
+    }
+  }
+  return result;
 }
 
 function syncProviderModelAutoRefresh(config: AppConfig): void {
