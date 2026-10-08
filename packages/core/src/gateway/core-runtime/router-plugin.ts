@@ -378,6 +378,28 @@ export async function createGatewayPlugin(input: GatewayPluginFactoryInput = {})
         return undefined;
       }
     }],
+    providerHooks: [{
+      key: "ccr-claude-read-image-upstream",
+      transformRequest(input: {
+        sourceAdapterKey?: string;
+        targetProvider?: string;
+        upstreamRequest: { body: unknown; headers: Record<string, string>; method?: string; url: string; bodyEncoding?: "bytes" | "form" | "json" | "none" | "text" };
+      }) {
+        // Fusion's virtual-model adapter may serialize tool_result image blocks after beforeRouting.
+        // Restore them at the final Anthropic upstream boundary without changing other protocols.
+        if (input.sourceAdapterKey !== "anthropic_messages" || input.targetProvider !== "anthropic" ||
+            !isRecord(input.upstreamRequest.body) || requestPath(input.upstreamRequest.url) !== "/v1/messages") {
+          return { ok: true as const, value: input.upstreamRequest };
+        }
+        const normalizedBody = normalizeClaudeReadImageToolResultBody(input.upstreamRequest.body);
+        if (!normalizedBody) return { ok: true as const, value: input.upstreamRequest };
+        const headers = { ...input.upstreamRequest.headers };
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === "content-length") delete headers[name];
+        }
+        return { ok: true as const, value: { ...input.upstreamRequest, body: normalizedBody, headers } };
+      }
+    }],
     requestTransforms: [{
       key: ccrRouterRequestTransformKey,
       stage: "beforeRouting",

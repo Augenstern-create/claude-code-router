@@ -109,6 +109,28 @@ test("single-runtime router restores JSON-wrapped Claude Read images before upst
   assert.equal(typeof requestBody.messages[1].content[0].content, "string");
 });
 
+test("upstream Read image restoration does not alter other provider protocols", async () => {
+  const plugin = await createGatewayPlugin({ plugin: { config: { appConfig: createDefaultAppConfig() } } });
+  const hook = plugin.providerHooks.find((item) => item.key === "ccr-claude-read-image-upstream");
+  assert.ok(hook);
+  const upstreamRequest = {
+    body: {
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "toolu_read", name: "Read", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_read", content: '[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="}}]' }] }
+      ]
+    },
+    headers: { "content-length": "123" },
+    url: "https://example.test/v1/chat/completions"
+  };
+  const result = hook.transformRequest({
+    sourceAdapterKey: "anthropic_messages",
+    targetProvider: "openai",
+    upstreamRequest
+  });
+  assert.equal(result.value, upstreamRequest);
+});
+
 test("CCR router core plugin publishes live token rate snapshots from the single runtime", async () => {
   const originalSend = process.send;
   const messages = [];

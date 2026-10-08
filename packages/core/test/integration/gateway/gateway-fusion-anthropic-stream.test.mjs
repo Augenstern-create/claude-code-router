@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import net from "node:net";
 import test from "node:test";
@@ -80,6 +81,80 @@ test("Fusion Anthropic streaming preserves native SSE while direct and non-strea
     await closeServer(upstream);
   }
 });
+
+test("Fusion streaming forwards Read image tool results as structured blocks", async (t) => {
+  const upstreamBodies = [];
+  const upstream = createServer(async (request, response) => {
+    upstreamBodies.push(JSON.parse(await readRequestBody(request)));
+    response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    response.end(anthropicStreamFixture());
+  });
+
+  try {
+    await gatewayService.stop();
+    await listen(upstream);
+    const config = fusionGatewayConfig(serverPort(upstream), await findAvailablePort());
+    config.virtualModelProfiles[0].match.exactAliases.push("Fusion/qwen3.8-27b-web");
+    const status = await gatewayService.start(config);
+    assert.equal(status.state, "running", status.lastError);
+
+    const body = process.env.CCR_COMPACT_REPLAY_BODY_PATH
+      ? JSON.parse(readFileSync(process.env.CCR_COMPACT_REPLAY_BODY_PATH, "utf8"))
+      : readImageStreamRequestFixture();
+    const readToolUseId = body.messages.flatMap((message) =>
+      Array.isArray(message.content) ? message.content : []
+    ).find((block) => block?.type === "tool_use" && block.name === "Read" &&
+      body.messages.some((message) => Array.isArray(message.content) && message.content.some((result) =>
+        result?.type === "tool_result" && result.tool_use_id === block.id &&
+        typeof result.content === "string" && result.content.includes('"type":"image"')
+      )))?.id;
+    assert.ok(readToolUseId);
+    body.model = "Fusion/qwen3.8-27b-web";
+    body.stream = true;
+    const response = await fetch(new URL("/v1/messages", status.endpoint), {
+      body: JSON.stringify(body),
+      headers: {
+        authorization: "Bearer test-api-key",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    await response.text();
+    assert.equal(response.status, 200);
+    assert.equal(upstreamBodies.length, 1);
+    const toolResult = upstreamBodies[0].messages.flatMap((message) =>
+      Array.isArray(message.content) ? message.content : []
+    ).find((block) => block?.type === "tool_result" && block.tool_use_id === readToolUseId);
+    assert.ok(toolResult);
+    assert.equal(Array.isArray(toolResult.content), true);
+    assert.equal(toolResult.content[0]?.type, "image");
+  } catch (error) {
+    if (isLocalListenUnavailable(error)) {
+      t.skip(`Local HTTP listen is unavailable: ${formatError(error)}`);
+      return;
+    }
+    throw error;
+  } finally {
+    await gatewayService.stop();
+    await deletePersistedRuntimeState("gateway");
+    await closeServer(upstream);
+  }
+});
+
+function readImageStreamRequestFixture() {
+  return {
+    max_tokens: 128,
+    messages: [
+      { role: "assistant", content: [{ type: "tool_use", id: "toolu_read_image", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_read_image", content: JSON.stringify([
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }
+      ]) }] }
+    ],
+    model: "Fusion/qwen3.8-27b-web",
+    stream: true
+  };
+}
 
 function fusionGatewayConfig(upstreamPort, gatewayPort) {
   const config = createDefaultAppConfig();
