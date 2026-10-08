@@ -116,6 +116,7 @@ export function ProfileView({
               </div>
             ) : null}
             {visibleProfiles.map(({ profile, index }) => {
+              const effectiveEnabled = config.profile.enabled !== false && profile.enabled;
               const scope = normalizeProfileScope(profile.scope);
               const surface = profile.agent === "zcode" || profile.agent === "claude-design" ? "app" : normalizeProfileSurface(profile.surface);
               const openSurfaces = profileOpenSurfaces(profile);
@@ -129,14 +130,14 @@ export function ProfileView({
               const appActionLabel = appRunning ? "Stop" : "Start";
               const appActionTooltip = `${t(appActionLabel)} ${t("App")}`;
               const cliActionTooltip = `${t("Copy")} ${t("CLI command")}`;
-              const showProfileLaunchActions = profile.enabled;
+              const showProfileLaunchActions = effectiveEnabled;
               const profileActionDisabled = Boolean(profileActionBusy);
 
               return (
                 <div
                   className={cn(
                     "flex min-h-[220px] min-w-0 flex-col rounded-md border border-border p-3 transition-colors",
-                    profile.enabled
+                    effectiveEnabled
                       ? "bg-background hover:bg-muted/10"
                       : "bg-muted/20"
                   )}
@@ -152,11 +153,11 @@ export function ProfileView({
                       </div>
                     </div>
                     <Toggle
-                      checked={profile.enabled}
+                      checked={effectiveEnabled}
                       onChange={(enabled) =>
                         updateProfileItem(index, { enabled })
                       }
-                      title={t(profile.enabled ? "Enabled" : "Disabled")}
+                      title={t(effectiveEnabled ? "Enabled" : "Disabled")}
                     />
                   </div>
                   <div className="mt-3 min-w-0 flex-1 space-y-1.5 border-t border-border/60 pt-2">

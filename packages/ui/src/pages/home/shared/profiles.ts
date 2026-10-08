@@ -1486,6 +1486,28 @@ export function normalizeProfileItem(profile: ProfileConfig, index: number): Pro
   };
 }
 
+export function updateProfileItemConfig(config: AppConfig, index: number, patch: Partial<ProfileConfig>): AppConfig {
+  const current = config.profile.profiles[index];
+  if (!current) {
+    return config;
+  }
+
+  const resumingDisabledProfiles = config.profile.enabled === false && patch.enabled === true;
+  const profiles = config.profile.profiles.map((profile, profileIndex) =>
+    profileIndex === index
+      ? normalizeProfileItem({ ...profile, ...patch }, profileIndex)
+      : resumingDisabledProfiles ? { ...profile, enabled: false } : profile
+  );
+  return {
+    ...config,
+    profile: {
+      ...config.profile,
+      enabled: resumingDisabledProfiles ? true : config.profile.enabled,
+      profiles: enforceSingleEnabledGlobalProfilePerAgent(profiles, index)
+    }
+  };
+}
+
 export function normalizeProfileItems(values: unknown): ProfileConfig[] {
   if (!Array.isArray(values)) {
     return fallbackConfig.profile.profiles;

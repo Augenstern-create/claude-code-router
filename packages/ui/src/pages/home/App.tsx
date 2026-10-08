@@ -18,7 +18,7 @@ import {
   isTraySupportedPlatform,
   LayoutGroup, mergeModelDisplayNames, mergeModelMetadata, mergeProviderModelLists, modelDescriptionsForModels, modelDisplayNamesForModels, modelMetadataForModels,
   navigation, NavigationId, normalizeApiKeys, normalizeBotGatewaySavedConfigs, normalizeConfig, normalizeLanguagePreference, normalizeObservabilityConfig, normalizeOverviewWidgets, normalizeProxyConfig,
-  normalizeProfileItem, normalizeProviderBaseUrl, normalizeRouterFallbackConfig, normalizeThemePreference, normalizeToolHubConfig, normalizeTrayBalanceProgressConfig, normalizeTrayIconPreference,
+  normalizeProviderBaseUrl, normalizeRouterFallbackConfig, normalizeThemePreference, normalizeToolHubConfig, normalizeTrayBalanceProgressConfig, normalizeTrayIconPreference,
   normalizeTrayWidgets, normalizeTrayWindowModules, normalizeVirtualModelDraftPatch, OnboardingReadinessOptions, OnboardingStepId, onboardingStepOrder,
   OverviewWidgetConfig, parseProviderAccountDraft, parseProviderExtraJsonDraft, pluginConfigPatchFromSettingsDraft,
   providerCredentialsFromDraft,
@@ -29,7 +29,7 @@ import {
   ProxyStatus, readLanguagePreference, RequestLogListFilter, RequestLogPage, ResolvedLanguage,
   ResolvedTheme, resolvePluginInstallPlan, resolveProviderDeepLinkCatalogModels, removeLocalAgentProviderPluginsForProvider, RouterRule, routingRuleFromDraft, SettingsPageId,
   setProviderPresets, splitLines, translateAppErrorMessage, translateText, TrayBalanceProgressConfig, TrayWidgetConfig,
-  uniqueProviderProtocols, updateApiKeyEditableConfig, UsageStatsFilter, UsageStatsRange, UsageStatsSnapshot, useEffect,
+  uniqueProviderProtocols, updateApiKeyEditableConfig, updateProfileItemConfig, UsageStatsFilter, UsageStatsRange, UsageStatsSnapshot, useEffect,
   useMemo, useReducedMotion, useRef, useState, validateVirtualModelDraft, ViewId,
   VirtualModelDraft, virtualModelProfileFromDraft, virtualModelProfilesUseMediaTools
 } from "./shared/index";
@@ -3141,21 +3141,7 @@ function App() {
   }
 
   function updateProfileItem(index: number, patch: Partial<ProfileConfig>) {
-    updateConfig((next) => {
-      const profiles = [...next.profile.profiles];
-      const current = profiles[index];
-      if (!current) {
-        return next;
-      }
-      profiles[index] = normalizeProfileItem({ ...current, ...patch }, index);
-      return {
-        ...next,
-        profile: {
-          ...next.profile,
-          profiles: enforceSingleEnabledGlobalProfilePerAgent(profiles, index)
-        }
-      };
-    });
+    updateConfig((next) => updateProfileItemConfig(next, index, patch));
   }
 
   function removeProfile(index: number) {

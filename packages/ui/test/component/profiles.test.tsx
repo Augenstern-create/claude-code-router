@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ProfileConfig } from "@ccr/core/contracts/app.ts";
 import { AddProfileForm, DeleteProfileDialog, ProfileView } from "@ccr/ui/pages/home/components/profiles.tsx";
 import { AppI18nContext, appCopy } from "@ccr/ui/pages/home/shared/i18n.tsx";
-import { createProfileDraft, createProfileDraftFromProfile, isProfileDraftSubmittable, normalizeUnknownProfileItem, profileAgentLogoUrl, profileConfigFromDraft, profileDraftWithDetectedAppPath, profileSummaryItems } from "@ccr/ui/pages/home/shared/profiles.ts";
+import { createProfileDraft, createProfileDraftFromProfile, isProfileDraftSubmittable, normalizeUnknownProfileItem, profileAgentLogoUrl, profileConfigFromDraft, profileDraftWithDetectedAppPath, profileSummaryItems, updateProfileItemConfig } from "@ccr/ui/pages/home/shared/profiles.ts";
 import { appConfigFixture } from "../fixtures/index.ts";
 
 const profile: ProfileConfig = {
@@ -469,6 +469,50 @@ test("ProfileView renders agent profiles as compact cards with inline actions", 
   assert.match(html, /aria-label="Remove profile"/);
   assert.doesNotMatch(html, /aria-label="Start App ZCode Main"/);
   assert.doesNotMatch(html, /aria-label="Copy CLI command ZCode Main"/);
+});
+
+test("ProfileView does not show a profile as enabled while the hidden master flag disables it", () => {
+  const config = appConfigFixture();
+  config.profile.enabled = false;
+  config.profile.profiles = [profile];
+
+  const html = renderToStaticMarkup(
+    <ProfileView
+      addProfile={() => undefined}
+      applyError=""
+      config={config}
+      copyProfileCliCommand={() => undefined}
+      editProfile={() => undefined}
+      openProfileApp={() => undefined}
+      profileRuntimeStatus={{ profiles: [] }}
+      removeProfile={() => undefined}
+      stopProfileApp={() => undefined}
+      updateProfileItem={() => undefined}
+    />
+  );
+
+  const switchMarkup = html.match(/<input[^>]*role="switch"[^>]*>/)?.[0];
+  assert.equal(switchMarkup?.match(/aria-checked="(true|false)"/)?.[1], "false");
+  assert.doesNotMatch(html, /aria-label="Copy CLI command Claude Code Main"/);
+});
+
+test("enabling a profile clears the hidden disabled state without enabling other profiles", () => {
+  const config = appConfigFixture();
+  config.profile.enabled = false;
+  config.profile.profiles = [profile, {
+    agent: "codex",
+    enabled: true,
+    id: "codex-main",
+    model: "openai/gpt-5.2",
+    name: "Codex Main"
+  }];
+
+  const updated = updateProfileItemConfig(config, 0, { enabled: true });
+  assert.equal(updated.profile.enabled, true);
+  assert.equal(updated.profile.profiles[0]?.enabled, true);
+  assert.equal(updated.profile.profiles[1]?.enabled, false);
+  assert.equal(config.profile.enabled, false);
+  assert.equal(config.profile.profiles[1]?.enabled, true);
 });
 
 test("profileSummaryItems uses Kimi-specific model labels", () => {
