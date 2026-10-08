@@ -86,6 +86,29 @@ test("CCR router core plugin exposes route endpoint and beforeRouting transform"
   assert.equal(resolved.requestBody.model, "beta");
 });
 
+test("single-runtime router restores JSON-wrapped Claude Read images before upstream routing", async () => {
+  const config = createDefaultAppConfig();
+  config.Providers = [{ models: ["alpha"], name: "Primary", type: "anthropic_messages" }];
+  const plugin = await createGatewayPlugin({ plugin: { config: { appConfig: config, publicGatewayMode: true } } });
+  const transform = plugin.requestTransforms.find((item) => item.key === ccrRouterRequestTransformKey);
+  const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } };
+  const requestBody = {
+    model: "Primary/alpha",
+    messages: [
+      { role: "assistant", content: [{ type: "tool_use", id: "toolu_read", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_read", content: JSON.stringify([image]) }] }
+    ]
+  };
+  const result = await transform.transform({
+    request: { headers: {}, method: "POST", url: "/v1/messages" },
+    requestBody,
+    route: { method: "POST", url: "/v1/messages" }
+  });
+  assert.ok(result);
+  assert.deepEqual(result.requestBody.messages[1].content[0].content, [image]);
+  assert.equal(typeof requestBody.messages[1].content[0].content, "string");
+});
+
 test("CCR router core plugin publishes live token rate snapshots from the single runtime", async () => {
   const originalSend = process.send;
   const messages = [];

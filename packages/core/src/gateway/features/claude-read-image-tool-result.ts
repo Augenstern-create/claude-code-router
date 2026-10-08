@@ -7,9 +7,13 @@ export function normalizeClaudeReadImageToolResults(body: Buffer): Buffer | unde
   } catch {
     return undefined;
   }
-  if (!isRecord(request) || !Array.isArray(request.messages)) {
-    return undefined;
-  }
+  if (!isRecord(request)) return undefined;
+  const normalized = normalizeClaudeReadImageToolResultBody(request);
+  return normalized ? Buffer.from(JSON.stringify(normalized)) : undefined;
+}
+
+export function normalizeClaudeReadImageToolResultBody(request: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!Array.isArray(request.messages)) return undefined;
 
   const readToolUseIds = new Set<string>();
   for (const message of request.messages) {
@@ -23,24 +27,27 @@ export function normalizeClaudeReadImageToolResults(body: Buffer): Buffer | unde
   if (readToolUseIds.size === 0) return undefined;
 
   let changed = false;
-  for (const message of request.messages) {
-    if (!isRecord(message) || message.role !== "user" || !Array.isArray(message.content)) continue;
-    for (const block of message.content) {
+  const messages = request.messages.map((message) => {
+    if (!isRecord(message) || message.role !== "user" || !Array.isArray(message.content)) return message;
+    let messageChanged = false;
+    const blocks = message.content.map((block) => {
       if (!isRecord(block) || block.type !== "tool_result" ||
           typeof block.tool_use_id !== "string" || !readToolUseIds.has(block.tool_use_id) ||
-          typeof block.content !== "string" || !block.content.trimStart().startsWith("[")) continue;
+          typeof block.content !== "string" || !block.content.trimStart().startsWith("[")) return block;
       let content: unknown;
       try {
         content = JSON.parse(block.content);
       } catch {
-        continue;
+        return block;
       }
-      if (!isImageContentBlocks(content)) continue;
-      block.content = content;
+      if (!isImageContentBlocks(content)) return block;
+      messageChanged = true;
       changed = true;
-    }
-  }
-  return changed ? Buffer.from(JSON.stringify(request)) : undefined;
+      return { ...block, content };
+    });
+    return messageChanged ? { ...message, content: blocks } : message;
+  });
+  return changed ? { ...request, messages } : undefined;
 }
 
 function isImageContentBlocks(value: unknown): value is Array<Record<string, unknown>> {

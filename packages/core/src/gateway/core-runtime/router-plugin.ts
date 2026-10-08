@@ -49,6 +49,7 @@ import {
   createGatewayModelsResponse,
   resolveGatewayPublicModelId
 } from "@ccr/core/gateway/features/model-discovery";
+import { normalizeClaudeReadImageToolResultBody } from "@ccr/core/gateway/features/claude-read-image-tool-result";
 import {
   codexApplyPatchBridgeResponseStream,
   prepareCodexApplyPatchBridgeRequest,
@@ -395,8 +396,11 @@ export async function createGatewayPlugin(input: GatewayPluginFactoryInput = {})
         const apiKey = await resolveApiKey(config, requestInput.request?.headers);
         const profile = profileForApiKey(config, apiKey);
         const modelBeforeRouting = requestedModelFromBody(requestInput.requestBody, path, requestInput.model);
+        const bodyForRouting = path === "/v1/messages"
+          ? normalizeClaudeReadImageToolResultBody(requestInput.requestBody) ?? requestInput.requestBody
+          : requestInput.requestBody;
         const routeResponse = await routeWithRouter(router, {
-          body: requestInput.requestBody,
+          body: bodyForRouting,
           headers: requestInput.request?.headers,
           method,
           path,
@@ -420,7 +424,7 @@ export async function createGatewayPlugin(input: GatewayPluginFactoryInput = {})
         }
         const discountTransform = await applyOpenRouterDiscountTransform(
           routeResponse,
-          requestInput,
+          bodyForRouting === requestInput.requestBody ? requestInput : { ...requestInput, requestBody: bodyForRouting },
           method,
           path,
           url,
