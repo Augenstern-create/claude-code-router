@@ -45,3 +45,54 @@ test("gateway pipeline preserves response retrieval query parameters and encoded
     globalThis.fetch = originalFetch;
   }
 });
+
+test("gateway forwards JSON-wrapped Read images as structured Anthropic tool content", async () => {
+  const config = createDefaultAppConfig();
+  config.observability.requestLogs = false;
+  config.contextArchive.enabled = false;
+  const pipeline = new GatewayRequestPipeline({
+    getBrowserWebSearchMcpIntegration: () => undefined,
+    getConfig: () => config,
+    getCoreAuthToken: () => "test-core-token",
+    getPlugin: () => ({
+      routeRequest: async ({ body }) => ({
+        body,
+        decision: { diagnostics: [], model: "qwen3.8-27b", reason: "test", source: "router" }
+      })
+    }),
+    getStatus: () => ({
+      coreEndpoint: "http://127.0.0.1:3457",
+      endpoint: "http://127.0.0.1:3456"
+    })
+  });
+  const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } };
+  const body = {
+    model: "qwen3.8-27b",
+    max_tokens: 1,
+    messages: [
+      { role: "assistant", content: [{ type: "tool_use", id: "toolu_read", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_read", content: JSON.stringify([image]) }] }
+    ]
+  };
+  const request = Readable.from([Buffer.from(JSON.stringify(body))]);
+  request.method = "POST";
+  request.url = "/v1/messages";
+  request.headers = { "content-type": "application/json", "user-agent": "claude-code/2.0" };
+  const response = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  response.writeHead = () => response;
+  const originalFetch = globalThis.fetch;
+  let forwarded;
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).endsWith("/v1/messages")) return new Response(null, { status: 404 });
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return new Response(JSON.stringify({ type: "message", role: "assistant", content: [], usage: {} }), {
+      headers: { "content-type": "application/json" }, status: 200
+    });
+  };
+  try {
+    await pipeline.proxyRequest(request, response, "/v1/messages");
+    assert.deepEqual(forwarded.messages[1].content[0].content, [image]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

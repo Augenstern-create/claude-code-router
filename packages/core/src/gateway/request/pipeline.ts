@@ -33,6 +33,7 @@ import { codexApplyPatchBridgeResponseStream, prepareCodexApplyPatchBridgeReques
 import { codexMultiAgentBridgeResponseStream, prepareCodexMultiAgentBridgeRequest } from "@ccr/core/gateway/features/codex-multi-agent-bridge";
 import { rewriteAnthropicMessageStartModelStream, shouldRewriteAnthropicMessageStartModel } from "@ccr/core/gateway/features/anthropic-response-model";
 import { prepareCursorOpenAICompatChatBody } from "@ccr/core/gateway/features/cursor-compat";
+import { normalizeClaudeReadImageToolResults } from "@ccr/core/gateway/features/claude-read-image-tool-result";
 import { filteredResponseHeaders, formatError, formatUpstreamErrorForLog, forwardHeaders, inferGatewayClient, readRequestBody, sendJson, shouldCaptureGatewayUsage, shouldSendBody, stripLocalGatewayAuthHeaders } from "@ccr/core/gateway/http/io";
 import { appendAggregateErrorAttemptSummary, shouldBufferAggregateErrorBody } from "@ccr/core/gateway/http/error-detail";
 import { parseJsonObjectSafe, serializeJsonBody, takeJsonObject } from "@ccr/core/gateway/http/body";
@@ -191,6 +192,21 @@ export class GatewayRequestPipeline {
           phase: "compatibility",
           startedAtMs: cursorCompatStartedAt
         });
+      }
+      if (method === "POST" && path === "/v1/messages" && bodyToForward) {
+        const readImageNormalizationStartedAt = Date.now();
+        const normalizedReadImages = normalizeClaudeReadImageToolResults(bodyToForward);
+        if (normalizedReadImages) {
+          bodyToForward = normalizedReadImages;
+          routeTrace?.capture({
+            changes: [{ operation: "replace", path: "/body/messages", scope: "body" }],
+            durationMs: Date.now() - readImageNormalizationStartedAt,
+            kind: "mutation",
+            name: "compatibility.claude-read-image-tool-result",
+            phase: "compatibility",
+            startedAtMs: readImageNormalizationStartedAt
+          });
+        }
       }
       let routeFallback = this.config.Router.fallback;
       let routedModel: string | undefined;
