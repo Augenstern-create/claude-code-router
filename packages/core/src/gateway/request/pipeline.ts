@@ -1133,6 +1133,7 @@ export class GatewayRequestPipeline {
             bodyText: sampler.read(),
             client,
             durationMs: Date.now() - startedAt,
+            error: streamDetectedError,
             fallbackModel: routedModel,
             method,
             path,

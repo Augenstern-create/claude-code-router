@@ -9,6 +9,7 @@ import type { AppConfig } from "@ccr/core/contracts/app";
 import { RAW_TRACE_SPOOL_DIR } from "@ccr/core/config/constants";
 import {
   enqueueGatewayRequestLogFromRawTrace,
+  detectSseError,
   type RequestLogRawTraceFile,
   type RequestLogRawTraceFiles,
   type RequestLogRawTraceUpdateInput
@@ -1519,10 +1520,12 @@ async function recordUsageCaptureFromRawTrace(
   }
 
   const responseHeaders = headersFromRawTrace(input.responseHeaders);
+  const bodyText = await rawTraceUsageBodyText(input, files.responseBody);
   await recordGatewayUsageCaptureIfMissing({
-    bodyText: await rawTraceUsageBodyText(input, files.responseBody),
+    bodyText,
     config,
     durationMs: numberValue(input.durationMs) ?? 0,
+    error: detectSseError(bodyText, responseHeaders.get("content-type") ?? undefined),
     fallbackModel: input.model,
     method,
     path,

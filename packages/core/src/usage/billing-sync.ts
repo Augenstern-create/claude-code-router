@@ -192,6 +192,7 @@ export class GatewayBillingSynchronizer {
       model,
       modelIsRouteSelector: false,
       path,
+      outcome: status === "success" ? "success" : status === "error" ? "failure" : undefined,
       provider,
       requestId: eventId,
       statusCode,

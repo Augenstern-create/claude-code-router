@@ -36,6 +36,8 @@ type UsageNumbers = {
   totalTokens?: number;
 };
 
+export type UsageOutcome = "success" | "failure" | "unknown";
+
 export type UsageEventInput = {
   client?: string;
   costSource?: string;
@@ -43,11 +45,13 @@ export type UsageEventInput = {
   createdAt?: string;
   credentialId?: string;
   durationMs: number;
+  error?: string;
   logicalModel?: string;
   method: string;
   model?: string;
   modelIsRouteSelector?: boolean;
   path: string;
+  outcome?: UsageOutcome;
   provider?: string;
   pricing?: ProviderModelPricing;
   requestId?: string;
@@ -60,9 +64,11 @@ export type UsageCaptureInput = {
   client?: string;
   config?: Pick<AppConfig, "Providers" | "virtualModelProfiles">;
   durationMs: number;
+  error?: string;
   fallbackModel?: string;
   method: string;
   path: string;
+  outcome?: UsageOutcome;
   providerName?: string;
   providerProtocol?: GatewayProviderProtocol;
   requestId?: string;
@@ -99,6 +105,7 @@ type StoredUsageEvent = {
   method: string;
   model: string;
   outputTokens: number;
+  outcome: UsageOutcome;
   path: string;
   provider: string;
   requestId: string;
@@ -186,6 +193,7 @@ export class UsageStore {
         provider,
         credential_id,
         status_code,
+        outcome,
         duration_ms,
         input_tokens,
         output_tokens,
@@ -194,7 +202,7 @@ export class UsageStore {
         total_tokens,
         cost_usd,
         cost_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     statement.run(
@@ -208,6 +216,7 @@ export class UsageStore {
       provider,
       credentialId,
       normalizeCount(event.statusCode),
+      resolveUsageOutcome(event.statusCode, event.error, event.outcome),
       normalizeCount(event.durationMs),
       inputTokens,
       outputTokens,
@@ -268,6 +277,8 @@ export class UsageStore {
       credentialId: readCredentialId(input.responseHeaders),
       requestId: input.requestId,
       statusCode: input.statusCode,
+      error: input.error,
+      outcome: input.outcome,
       usage
     });
   }
@@ -357,6 +368,7 @@ export class UsageStore {
         provider TEXT NOT NULL DEFAULT 'unknown',
         credential_id TEXT NOT NULL DEFAULT '',
         status_code INTEGER NOT NULL DEFAULT 0,
+        outcome TEXT NOT NULL DEFAULT 'unknown',
         duration_ms INTEGER NOT NULL DEFAULT 0,
         input_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -424,6 +436,7 @@ export class UsageStore {
             provider,
             credential_id,
             status_code,
+            outcome,
             duration_ms,
             input_tokens,
             output_tokens,
@@ -444,6 +457,12 @@ export class UsageStore {
             logs.provider,
             logs.credential_id,
             logs.status_code,
+            CASE
+              WHEN logs.error <> '' THEN 'failure'
+              WHEN logs.status_code = 0 THEN 'unknown'
+              WHEN logs.ok = 1 THEN 'success'
+              ELSE 'failure'
+            END,
             logs.duration_ms,
             logs.input_tokens,
             logs.output_tokens,
@@ -470,6 +489,38 @@ export class UsageStore {
               )
             )
         `).run("%/count_tokens%", since.toISOString());
+      database.prepare(`
+          UPDATE usage_events AS events
+          SET outcome = (
+            SELECT CASE
+              WHEN logs.error <> '' THEN 'failure'
+              WHEN logs.status_code = 0 THEN 'unknown'
+              WHEN logs.ok = 1 THEN 'success'
+              ELSE 'failure'
+            END
+            FROM request_log_source.request_logs AS logs
+            WHERE logs.request_id = events.request_id
+              AND logs.request_id <> ''
+              AND logs.source_usage_id IS NULL
+            ORDER BY logs.id DESC
+            LIMIT 1
+          )
+          WHERE events.request_id <> ''
+            AND events.created_at >= ?
+            AND events.outcome <> (
+              SELECT CASE
+                WHEN logs.error <> '' THEN 'failure'
+                WHEN logs.status_code = 0 THEN 'unknown'
+                WHEN logs.ok = 1 THEN 'success'
+                ELSE 'failure'
+              END
+              FROM request_log_source.request_logs AS logs
+              WHERE logs.request_id = events.request_id
+                AND logs.source_usage_id IS NULL
+              ORDER BY logs.id DESC
+              LIMIT 1
+            )
+        `).run(since.toISOString());
     } finally {
       database.exec("DETACH DATABASE request_log_source");
     }
@@ -507,6 +558,14 @@ function ensureUsageSchema(database: SqlDatabase): void {
   }
   if (!columns.has("credential_id")) {
     database.exec("ALTER TABLE usage_events ADD COLUMN credential_id TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columns.has("outcome")) {
+    database.exec("ALTER TABLE usage_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'unknown'");
+    database.exec(`UPDATE usage_events SET outcome = CASE
+      WHEN status_code = 0 THEN 'unknown'
+      WHEN status_code >= 200 AND status_code < 400 THEN 'success'
+      ELSE 'failure'
+    END`);
   }
   database.exec("CREATE INDEX IF NOT EXISTS usage_events_client_idx ON usage_events(client)");
   database.exec("CREATE INDEX IF NOT EXISTS usage_events_created_at_idx ON usage_events(created_at)");
@@ -720,12 +779,24 @@ function toStoredUsageEvent(row: Record<string, SqlValue>): StoredUsageEvent {
     method: String(row.method ?? ""),
     model: normalizeLabel(String(row.model ?? ""), "unknown"),
     outputTokens: normalizeCount(row.output_tokens),
+    outcome: normalizeStoredUsageOutcome(row.outcome),
     path: normalizeLabel(String(row.path ?? ""), "/"),
     provider: normalizeLabel(String(row.provider ?? ""), "unknown"),
     requestId: String(row.request_id ?? ""),
     statusCode: normalizeCount(row.status_code),
     totalTokens: normalizeCount(row.total_tokens)
   };
+}
+
+function resolveUsageOutcome(statusCode: number, error?: string, outcome?: UsageOutcome): UsageOutcome {
+  if (error?.trim()) return "failure";
+  if (outcome) return outcome;
+  if (!Number.isFinite(statusCode) || statusCode <= 0) return "unknown";
+  return statusCode >= 200 && statusCode < 400 ? "success" : "failure";
+}
+
+function normalizeStoredUsageOutcome(value: SqlValue | undefined): UsageOutcome {
+  return value === "success" || value === "failure" ? value : "unknown";
 }
 
 const usageTotalsSelect = `
@@ -740,8 +811,8 @@ const usageTotalsSelect = `
             END), 0) AS computed_total_tokens,
             COALESCE(SUM(COALESCE(cost_usd, 0)), 0) AS cost_usd,
             COALESCE(SUM(duration_ms), 0) AS duration_ms,
-            COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0) AS success_count,
-            COALESCE(SUM(CASE WHEN status_code = 0 THEN 1 ELSE 0 END), 0) AS unknown_count,
+            COALESCE(SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
+            COALESCE(SUM(CASE WHEN outcome = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_count,
             COALESCE(SUM(CASE
               WHEN total_tokens - output_tokens > input_tokens + cache_read_tokens + cache_write_tokens THEN total_tokens - output_tokens
               ELSE input_tokens + cache_read_tokens + cache_write_tokens
@@ -904,6 +975,7 @@ function readRecentRequestRows(database: SqlDatabase, query: UsageWhereClause): 
         provider,
         credential_id,
         status_code,
+        outcome,
         duration_ms,
         input_tokens,
         output_tokens,
@@ -1037,8 +1109,8 @@ function buildTotals(events: StoredUsageEvent[]): UsageTotals {
   const costUsd = sum(events, (event) => event.costUsd);
   const totalTokens = sum(events, totalTokenCount);
   const promptTokens = sum(events, promptTokenCount);
-  const successfulRequests = events.filter((event) => event.statusCode >= 200 && event.statusCode < 400).length;
-  const unknownCount = events.filter((event) => event.statusCode === 0).length;
+  const successfulRequests = events.filter((event) => event.outcome === "success").length;
+  const unknownCount = events.filter((event) => event.outcome === "unknown").length;
   const errorCount = requestCount - successfulRequests - unknownCount;
 
   return {

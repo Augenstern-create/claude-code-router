@@ -150,7 +150,7 @@ test("UsageStore aggregates stats in SQLite without loading all events", async (
   }
 });
 
-test("UsageStore counts missing HTTP status as unknown, not a failed request", async () => {
+test("UsageStore distinguishes unknown status, network failure, and HTTP 200 stream failure", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "ccr-usage-unknown-status-test-"));
   let store;
   try {
@@ -164,12 +164,28 @@ test("UsageStore counts missing HTTP status as unknown, not a failed request", a
         statusCode
       });
     }
+    await store.record({
+      error: "socket reset",
+      method: "POST",
+      model: "test-model",
+      path: "/v1/messages",
+      requestId: "network-failed",
+      statusCode: 0
+    });
+    await store.record({
+      error: "SSE error event",
+      method: "POST",
+      model: "test-model",
+      path: "/v1/messages",
+      requestId: "stream-failed",
+      statusCode: 200
+    });
 
     const stats = await store.getStats("30d", { includeProxy: true });
-    assert.equal(stats.totals.requestCount, 3);
-    assert.equal(stats.totals.errorCount, 1);
+    assert.equal(stats.totals.requestCount, 5);
+    assert.equal(stats.totals.errorCount, 3);
     assert.equal(stats.totals.unknownCount, 1);
-    assert.equal(stats.totals.successRate, 0.5);
+    assert.equal(stats.totals.successRate, 0.25);
     assert.equal(stats.series.reduce((count, point) => count + point.unknownCount, 0), 1);
     assert.equal(stats.models[0]?.unknownCount, 1);
   } finally {
@@ -825,6 +841,135 @@ test("UsageStore backfills missing events from request logs", async () => {
     assert.equal(reread.totals.requestCount, 1);
     assert.equal(reread.totals.totalTokens, 17);
   } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("UsageStore historical backfill keeps explicit request-log failures at status 0 and HTTP 200", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-usage-outcome-backfill-test-"));
+  const requestLogDbFile = path.join(dir, "request-logs.sqlite");
+  const requestLogStore = new RequestLogStore(requestLogDbFile);
+  const usageStore = new UsageStore(path.join(dir, "usage.sqlite"), { requestLogDbFile });
+  try {
+    const startedAt = new Date().toISOString();
+    // Simulate usage rows written before the corresponding request-log outcome
+    // was known; reconciliation must correct them without duplicating requests.
+    for (const [requestId, statusCode] of [["network-failed", 0], ["sse-failed", 200]]) {
+      await usageStore.record({
+        createdAt: startedAt,
+        durationMs: 1,
+        method: "POST",
+        model: "test-model",
+        path: "/v1/messages",
+        requestId,
+        statusCode
+      });
+    }
+    for (const [requestId, statusCode, error] of [
+      ["successful", 200, undefined],
+      ["network-failed", 0, "socket reset"],
+      ["unknown", 0, undefined],
+      ["sse-failed", 200, undefined]
+    ]) {
+      await requestLogStore.record({
+        ...(error ? { error } : {}),
+        method: "POST",
+        path: "/v1/messages",
+        requestBody: Buffer.from('{"model":"test-model"}'),
+        requestId,
+        responseBodyText: "{}",
+        responseHeaders: { "content-type": "application/json" },
+        startedAt,
+        statusCode,
+        url: "/v1/messages"
+      });
+    }
+    await requestLogStore.updateFromRawTrace({
+      isStream: true,
+      requestId: "sse-failed",
+      responseBodyContentType: "text/event-stream",
+      responseBodyText: 'event: error\ndata: {"error":{"message":"late failure"}}\n\n',
+      responseHeaders: { "content-type": "text/event-stream" },
+      statusCode: 200
+    });
+
+    assert.equal((await requestLogStore.list({ status: "error" })).total, 2);
+    assert.equal((await requestLogStore.list({ status: "unknown" })).total, 1);
+    const stats = await usageStore.getStats("today", { includeProxy: true });
+    assert.equal(stats.totals.requestCount, 4);
+    assert.equal(stats.totals.errorCount, 2);
+    assert.equal(stats.totals.unknownCount, 1);
+    assert.equal(stats.totals.successRate, 1 / 3);
+  } finally {
+    usageStore.database?.close();
+    await requestLogStore.close();
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("UsageStore capture preserves a detected stream failure despite HTTP 200", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-usage-stream-outcome-test-"));
+  const store = new UsageStore(path.join(dir, "usage.sqlite"));
+  try {
+    await store.recordCapture({
+      bodyText: 'event: error\ndata: {"error":{"message":"late failure"}}\n\n',
+      durationMs: 10,
+      error: "late failure",
+      method: "POST",
+      path: "/v1/messages",
+      requestId: "stream-error",
+      responseHeaders: new Headers({ "content-type": "text/event-stream" }),
+      statusCode: 200
+    });
+    const stats = await store.getStats("today", { includeProxy: true });
+    assert.equal(stats.totals.errorCount, 1);
+    assert.equal(stats.totals.unknownCount, 0);
+    assert.equal(stats.recentRequests[0]?.errorCount, 1);
+  } finally {
+    store.database?.close();
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("UsageStore migrates legacy rows without inventing success for status zero", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-usage-outcome-migration-test-"));
+  const dbFile = path.join(dir, "usage.sqlite");
+  const legacy = createBetterSqliteDatabase(dbFile);
+  legacy.exec(`
+    CREATE TABLE usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      request_id TEXT NOT NULL DEFAULT '',
+      client TEXT NOT NULL DEFAULT 'unknown',
+      method TEXT NOT NULL,
+      path TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT 'unknown',
+      logical_model TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT 'unknown',
+      credential_id TEXT NOT NULL DEFAULT '',
+      status_code INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL,
+      cost_source TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  const insert = legacy.prepare("INSERT INTO usage_events (created_at, method, path, status_code) VALUES (?, 'POST', '/v1/messages', ?)");
+  for (const statusCode of [0, 200, 500]) insert.run(new Date().toISOString(), statusCode);
+  legacy.close();
+  const store = new UsageStore(dbFile);
+  try {
+    const stats = await store.getStats("today", { includeProxy: true });
+    assert.equal(stats.totals.requestCount, 3);
+    assert.equal(stats.totals.unknownCount, 1);
+    assert.equal(stats.totals.errorCount, 1);
+    assert.equal(stats.totals.successRate, 0.5);
+  } finally {
+    store.database?.close();
     rmSync(dir, { force: true, recursive: true });
   }
 });
